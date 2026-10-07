@@ -96,11 +96,12 @@ public static class ExchangeExporter
         }
 
         var types = used.ToDictionary(u => u.Blueprint.Id, u => u);
+        var paths = ScadaPaths(project, instances);
         foreach (var obj in instances)
         {
             if (!types.TryGetValue(InstanceFactory.BlueprintIdOf(obj), out var entry))
                 continue;
-            file.Instances.Add(ToInstance(project, library, obj, entry.Blueprint, entry.Type, warnings));
+            file.Instances.Add(ToInstance(project, library, obj, entry.Blueprint, entry.Type, paths, warnings));
         }
         return new ExportResult(file, new ExportCheck(errors, warnings, infos));
     }
@@ -197,7 +198,36 @@ public static class ExchangeExporter
         return exchange;
     }
 
-    private static ExchangeInstance ToInstance(Project project, CmLibrary library, ProjectObject obj, Blueprint blueprint, CmType type, List<string> warnings)
+    /// <summary>
+    /// Builder path → SCADA path of every instance. Builder paths include folders (<c>PMS.MAIN</c>); SCADA paths follow the
+    /// containment tree only (<c>MAIN</c>, <c>PLANT.GROUP1.LAMP1</c>).
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> ScadaPaths(Project project, IReadOnlyList<ProjectObject> instances)
+    {
+        var ids = instances.Select(i => i.Id).ToHashSet();
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var obj in instances)
+        {
+            var segments = new Stack<string>();
+            for (ProjectObject? o = obj; o is not null; o = o.ParentId is { } p && project.Find(p) is { } parent && ids.Contains(parent.Id) ? parent : null)
+                segments.Push(o.Name);
+            result[project.GetPath(obj.Id)] = string.Join('.', segments);
+        }
+        return result;
+    }
+
+    /// <summary>Rewrites absolute references from Builder paths to SCADA paths (longest matching object path wins).</summary>
+    public static string ToScadaReferences(string expression, IReadOnlyDictionary<string, string> paths) =>
+        expression.Length == 0 ? expression : Expression.RewriteReferences(expression, reference =>
+        {
+            var best = paths.Keys
+                .Where(p => reference.Equals(p, StringComparison.OrdinalIgnoreCase) || reference.StartsWith(p + ".", StringComparison.OrdinalIgnoreCase))
+                .MaxBy(p => p.Length);
+            return best is null ? reference : paths[best] + reference[best.Length..];
+        });
+
+    private static ExchangeInstance ToInstance(Project project, CmLibrary library, ProjectObject obj, Blueprint blueprint, CmType type,
+        IReadOnlyDictionary<string, string> paths, List<string> warnings)
     {
         var path = project.GetPath(obj.Id);
         var instance = new ExchangeInstance
@@ -215,12 +245,14 @@ public static class ExchangeExporter
 
         var sources = InterlockSources.Targeting(project, library, obj.Id);
         if (sources.Any(s => !(s.FromBlueprint && s.Owner.Id == obj.Id)))
-            instance.InterlockTexts = Texts(sources.Select(s => (s.Rule.Kind, InterlockDisplay.Text(project, s))));
+            instance.InterlockTexts = Texts(sources.Select(s => (s.Rule.Kind, string.IsNullOrWhiteSpace(s.Rule.Text)
+                ? ConditionText.Generate(ToScadaReferences(InterlockDisplay.Condition(project, s), paths))
+                : s.Rule.Text)));
 
         foreach (var rule in InterlockRule.WithAlarmNames(InterlockSources.OwnRules(obj)).Where(r => r.Kind == InterlockKind.Trip))
         {
             var alarm = InterlockRule.TripAlarm(rule, $"{{instance_name}}: trip {rule.Alarm}").Definition;
-            alarm.Condition = InterlockDisplay.Condition(project, new InterlockSource(obj, rule, false));
+            alarm.Condition = ToScadaReferences(InterlockDisplay.Condition(project, new InterlockSource(obj, rule, false)), paths);
             if (alarm.Id == Guid.Empty)
                 alarm.Id = StableId.From("apolloiq.builder.trip-alarm", obj.Id.ToString("D"), rule.Alarm!);
             instance.Alarms.Add(AlarmRules.ForScada(alarm));

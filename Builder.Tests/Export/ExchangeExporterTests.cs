@@ -170,9 +170,20 @@ public sealed class ExchangeExporterTests : IDisposable
         Assert.Null(file.Instances.Single(i => i.Id == sample.Feed.Id).InterlockTexts);
 
         var plantAlarm = Assert.Single(file.Instances.Single(i => i.Id == sample.Plant.Id).Alarms);
-        Assert.Equal(("MainOpened", 21, AlarmTrigger.PlcByte, "![PMS.MAIN.is_closed]"), (plantAlarm.Name, plantAlarm.Priority, plantAlarm.Trigger, plantAlarm.Condition));
+        Assert.Equal(("MainOpened", 21, AlarmTrigger.PlcByte, "![MAIN.is_closed]"), (plantAlarm.Name, plantAlarm.Priority, plantAlarm.Trigger, plantAlarm.Condition));
         Assert.Equal(sample.Plant.Interlocks[1].AlarmId, plantAlarm.Id);
         Assert.Empty(lamp.Alarms);
+    }
+
+    [Fact]
+    public void AbsoluteReferencesUseScadaPaths()
+    {
+        var sample = Build();
+        var paths = ExchangeExporter.ScadaPaths(sample.Project, ExchangeExporter.Instances(sample.Project));
+        Assert.Equal("MAIN", paths["PMS.MAIN"]);
+        Assert.Equal("PLANT.GROUP1.LAMP1", paths["PMS.PLANT.GROUP1.LAMP1"]);
+        Assert.Equal("[MAIN.STS.state] == Closed && [PLANT.GROUP1.is_running] && [OTHER.x]",
+            ExchangeExporter.ToScadaReferences("[PMS.MAIN.STS.state] == Closed && [PMS.PLANT.GROUP1.is_running] && [OTHER.x]", paths));
     }
 
     [Fact]
