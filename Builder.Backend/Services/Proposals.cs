@@ -41,6 +41,9 @@ public sealed class Proposal
     /// <summary>The project revision (<see cref="DesignReader.Revision"/>) the first version was computed against.</summary>
     public string BaseRevision { get; set; } = "";
 
+    /// <summary>The project revision after the last version, accept or undo of this proposal: a later change was made elsewhere.</summary>
+    public string KnownRevision { get; set; } = "";
+
     /// <summary>The whole proposal was rejected or closed: no item can be accepted any more.</summary>
     public bool Closed { get; set; }
 

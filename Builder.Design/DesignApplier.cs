@@ -90,10 +90,19 @@ public static class DesignApplier
         }
         if (result.Ok)
             foreach (var error in LogicProgram.Build(copy, context.Library).Errors)
-                result.Errors.Add($"{error.Location}: {error.Message}");
+            {
+                // A role that is not filled yet is a state the Builder allows (an EM accepted before its members): a warning.
+                if (error.Message.Contains("is not filled", StringComparison.Ordinal) || error.Message.Contains("'unfilled_", StringComparison.Ordinal))
+                    result.Warnings.Add($"{error.Location.Split(' ')[0]}: a role is not filled yet; its logic does not run until the member is there.");
+                else
+                    result.Errors.Add($"{error.Location}: {error.Message}");
+            }
         var distinct = result.Errors.Distinct().ToList();
         result.Errors.Clear();
         result.Errors.AddRange(distinct);
+        var warnings = result.Warnings.Distinct().ToList();
+        result.Warnings.Clear();
+        result.Warnings.AddRange(warnings);
         return result;
     }
 

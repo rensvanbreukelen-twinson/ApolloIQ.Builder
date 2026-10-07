@@ -1159,3 +1159,78 @@ code,
   margin: 0 0 12px;
   padding: 8px 12px;
 }
+
+/* Proposals: the review of an AI proposal */
+.pr-layout { grid-template-columns: 280px 1fr; }
+.pr-list-head { display: flex; align-items: center; justify-content: space-between; }
+.pr-reviewer { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12.5px; }
+.pr-reviewer .input { flex: 1; min-width: 0; height: 26px; }
+.pr-undo { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin-top: 10px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; font-size: 12.5px; }
+.pr-list-item { display: flex; flex-direction: column; gap: 3px; margin-bottom: 4px; }
+.pr-list-title { font-weight: 600; }
+.pr-list-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.pr-list-count { font-size: 12px; }
+.pr-status { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #eef0f3; color: var(--muted); }
+.pr-status-Open { background: var(--accent-soft); color: var(--accent); }
+.pr-status-PartlyAccepted { background: #fff4d6; color: #7a5a00; }
+.pr-status-Accepted { background: #e3f1e7; color: #2e7d32; }
+.pr-status-Rejected, .pr-status-Closed { background: #f6e3e3; color: var(--danger); }
+.pr-review { min-height: 0; }
+.pr-version { font-size: 12.5px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 10px; background: #fafbfc; }
+.pr-valid { background: #e3f1e7; color: #1e5b23; }
+.pr-checking { color: var(--muted); }
+.pr-notice { display: flex; align-items: center; gap: 8px; }
+.pr-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 46%); min-height: 0; }
+.pr-main { overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+.pr-detail { overflow: auto; padding: 12px 16px; border-left: 1px solid var(--border); background: var(--panel); }
+.pr-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; }
+.pr-card h3 { margin: 0 0 8px; font-size: 14px; display: flex; gap: 10px; align-items: baseline; }
+.pr-counts { font-weight: normal; font-size: 12.5px; }
+.pr-conflict-text { color: #a15c00; font-weight: 600; }
+.markdown p, .markdown ul, .markdown ol { margin: 4px 0 8px; line-height: 1.45; }
+.markdown h4 { margin: 10px 0 4px; font-size: 13px; }
+.pr-questions { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; line-height: 1.4; }
+.pr-about { display: inline-block; margin-bottom: 2px; padding: 0 6px; border-radius: 4px; background: #ecebf8; }
+.pr-group { border-top: 1px solid var(--border); padding: 6px 0; }
+.pr-group:first-of-type { border-top: none; }
+.pr-group-head { display: flex; align-items: center; gap: 8px; font-weight: 600; padding: 2px 0; cursor: pointer; }
+.pr-group-head .muted { font-weight: normal; font-size: 12px; }
+.pr-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 22px; border-radius: var(--radius); cursor: pointer; flex-wrap: wrap; }
+.pr-item:hover { background: var(--bg); }
+.pr-item-focus { background: var(--accent-soft) !important; }
+.pr-item-Accepted .pr-summary, .pr-item-Rejected .pr-summary { color: var(--muted); }
+.pr-item-Rejected .pr-summary { text-decoration: line-through; }
+.pr-summary { flex: 1; min-width: 200px; }
+.pr-kind { display: inline-block; min-width: 56px; padding: 0 6px; border-radius: 4px; font-size: 11.5px; font-family: var(--mono); text-align: center; background: #eef0f3; }
+.pr-kind-Create { background: #e3f1e7; color: #2e7d32; }
+.pr-kind-Update, .pr-kind-Rename, .pr-kind-Move { background: #fff4d6; color: #7a5a00; }
+.pr-kind-Delete { background: #f6e3e3; color: var(--danger); }
+.pr-chip { font-size: 11.5px; padding: 0 7px; border-radius: 10px; border: 1px solid var(--border-strong); color: var(--muted); background: #fff; }
+.pr-chip-Accepted { border-color: #8fc79a; color: #2e7d32; background: #eef8f0; }
+.pr-chip-Rejected { border-color: #e2a6a2; color: var(--danger); background: #fdf1f0; }
+.pr-chip-conflict { border-color: #e0b36a; color: #8a4f00; background: #fff4d6; }
+.pr-chip-changed { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.pr-detail-head { display: flex; align-items: center; gap: 8px; }
+.pr-item-id { margin: 4px 0 8px; font-size: 11.5px; }
+.pr-inline { margin: 6px 0; border: 1px solid var(--border); border-radius: var(--radius); }
+.pr-needs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; font-size: 12.5px; }
+.pr-link { border: none; background: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+.pr-diff-wrap { margin: 10px 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.pr-diff-legend { padding: 4px 10px; font-size: 12px; background: #fafbfc; border-bottom: 1px solid var(--border); }
+.pr-plus { color: #2e7d32; font-weight: 600; }
+.pr-minus { color: var(--danger); font-weight: 600; }
+.pr-diff { margin: 0; padding: 4px 0; font-family: var(--mono); font-size: 12px; line-height: 1.5; overflow-x: auto; background: #fff; }
+.pr-line { display: flex; padding: 0 10px 0 0; }
+.pr-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.pr-line-added { background: #e6f4ea; }
+.pr-line-removed { background: #fbe9e8; }
+.pr-sign { flex: none; width: 22px; text-align: center; color: var(--muted); user-select: none; }
+.pr-line-added .pr-sign { color: #2e7d32; }
+.pr-line-removed .pr-sign { color: var(--danger); }
+.pr-detail h4 { margin: 14px 0 6px; font-size: 13px; }
+.pr-comments { display: flex; flex-direction: column; gap: 8px; }
+.pr-comment { border-left: 3px solid var(--accent-soft); padding: 2px 0 2px 10px; }
+.pr-comment-head { font-size: 12px; }
+.pr-comment-text { white-space: pre-wrap; line-height: 1.4; }
+.pr-comment-input { width: 100%; height: auto; padding: 6px 8px; resize: vertical; font: inherit; }
+.pr-comment-actions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }

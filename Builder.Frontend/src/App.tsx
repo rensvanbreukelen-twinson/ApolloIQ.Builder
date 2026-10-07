@@ -10,6 +10,7 @@ import { DeleteDialog } from './components/DeleteDialog'
 import { ExportDialog } from './components/ExportDialog'
 import { InterlocksDialog } from './components/InterlocksDialog'
 import { MoveDialog } from './components/MoveDialog'
+import { ProposalPanel } from './components/ProposalPanel'
 import { NameDialog } from './components/NameDialog'
 import { ProjectTree } from './components/ProjectTree'
 import { ScenarioPanel } from './components/ScenarioPanel'
@@ -58,7 +59,7 @@ export default function App() {
   const [dialog, setDialog] = useState<Dialog>(null)
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [view, setView] = useState<'tags' | 'configurator' | 'simulator' | 'scenarios' | 'topology' | 'blueprints'>('tags')
+  const [view, setView] = useState<'tags' | 'configurator' | 'simulator' | 'scenarios' | 'topology' | 'blueprints' | 'proposals'>('tags')
 
   const openProject = useCallback(async (id: string) => {
     const opened = await api.project(id)
@@ -109,6 +110,7 @@ export default function App() {
             <button role="tab" aria-selected={view === 'simulator'} className={`tab ${view === 'simulator' ? 'tab-active' : ''}`} onClick={() => setView('simulator')}>Simulator</button>
             <button role="tab" aria-selected={view === 'topology'} className={`tab ${view === 'topology' ? 'tab-active' : ''}`} onClick={() => setView('topology')}>Topology</button>
             <button role="tab" aria-selected={view === 'scenarios'} className={`tab ${view === 'scenarios' ? 'tab-active' : ''}`} onClick={() => setView('scenarios')}>Scenarios</button>
+            <button role="tab" aria-selected={view === 'proposals'} className={`tab ${view === 'proposals' ? 'tab-active' : ''}`} onClick={() => setView('proposals')}>Proposals</button>
             </>}
           </div>
         )}
@@ -118,7 +120,11 @@ export default function App() {
 
       {error && <div className="banner banner-error">{error}</div>}
       {view === 'blueprints' ? (
-        <main className="workspace bp-workspace"><BlueprintPanel /></main>
+        <main className="workspace bp-workspace"><BlueprintPanel key={revision} /></main>
+      ) : view === 'proposals' && project ? (
+        <main className="workspace bp-workspace">
+          <ProposalPanel key={project.id} projectId={project.id} onChanged={() => { void refresh(); void api.types().then(setTypes) }} />
+        </main>
       ) : project ? (
         <main className="workspace">
           <aside className="sidebar">

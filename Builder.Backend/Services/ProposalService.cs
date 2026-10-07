@@ -100,6 +100,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
                 CreatedAt = now,
                 UpdatedAt = now,
                 BaseRevision = revision,
+                KnownRevision = revision,
                 Versions =
                 [
                     new ProposalVersion
@@ -140,6 +141,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
                 Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim(), BaseRevision = revision, Design = design.ToJson(), Items = plan.Items,
                 ChangedItems = changed, NewItems = added, RemovedItems = removed
             });
+            proposal.KnownRevision = revision;
             if (!string.IsNullOrWhiteSpace(title))
                 proposal.Title = title.Trim();
             if (description is not null)
@@ -202,6 +204,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
             foreach (var id in itemIds)
                 proposal.ItemStates[id] = new ItemState { State = ItemStates.Accepted, Version = proposal.Latest.Number, At = undo.At, By = undo.By };
             proposal.UpdatedAt = undo.At;
+            proposal.KnownRevision = undo.RevisionAfter;
             proposal.Status = Status(proposal);
             files.Save(proposal);
             return new ProposalResultDto(View(session, proposal), new ValidationDto(true, [], result.Warnings));
@@ -298,6 +301,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
             {
                 foreach (var id in undo.ItemIds)
                     proposal.ItemStates.Remove(id);
+                proposal.KnownRevision = session.Read(p => DesignReader.Revision(p, store.All()));
                 proposal.UpdatedAt = DateTimeOffset.UtcNow;
                 proposal.Status = Status(proposal);
                 files.Save(proposal);
@@ -394,7 +398,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
         var versions = proposal.Versions.Select(v => new VersionSummaryDto(v.Number, v.CreatedAt, v.Author, v.Note, v.Items.Count, v.ChangedItems.Count,
             v.NewItems.Count, v.RemovedItems.Count)).ToList();
         return new ProposalDto(proposal.Id, proposal.Title, proposal.Description, proposal.Author, proposal.Status, proposal.CreatedAt, proposal.UpdatedAt,
-            proposal.BaseRevision, revision, revision != latest.BaseRevision, latest.Number, versions, plan.Questions, plan.Problems, plan.Warnings, items,
+            proposal.BaseRevision, revision, revision != (string.IsNullOrEmpty(proposal.KnownRevision) ? latest.BaseRevision : proposal.KnownRevision), latest.Number, versions, plan.Questions, plan.Problems, plan.Warnings, items,
             proposal.Comments, counts, latest.Design);
     }
 }

@@ -605,14 +605,16 @@ public sealed partial class DesignPlanner
             var beforeJson = new JsonObject { ["commandInputs"] = DesignDocument.ToJson(before ?? new DesignCommandInputs()) };
             var afterJson = new JsonObject { ["commandInputs"] = DesignDocument.ToJson(inputsAfter) };
             if (problems.Count > 0 || !JsonNode.DeepEquals(beforeJson, afterJson))
+            {
                 Add($"object:{path}:commandInputs", existing is null ? ChangeKinds.Create : ChangeKinds.Update, ChangeAreas.CommandInputs, path, path,
-                    $"Set the command inputs of {path}", beforeJson, afterJson, CommandInputPhase, ctx =>
+                    $"Set the command inputs of {path}", existing is null ? null : beforeJson, afterJson, CommandInputPhase, ctx =>
                     {
                         var id = Need(ctx);
                         var unitRows = CommandInputBehaviour.InputsOf(ctx.Project.Get(id))?.Rows.Where(r => r.Source == CommandSource.Unit) ?? [];
                         var wanted = config ?? CommandInputConfig.Empty;
                         CommandInputBehaviour.Configure(ctx.Project, ctx.Library, id, wanted with { Rows = [.. wanted.Rows, .. unitRows] });
                     }, [objectItem], problems: problems);
+            }
         }
 
         if (node.Values is { } values)
@@ -635,7 +637,7 @@ public sealed partial class DesignPlanner
             if (!JsonNode.DeepEquals(beforeJson, afterJson))
                 Add($"object:{path}:values", existing is null ? ChangeKinds.Create : ChangeKinds.Update, ChangeAreas.Values, path, path,
                     $"Set initial values of {path}: {string.Join(", ", after.Select(v => $"{v.Key} = {v.Value}").DefaultIfEmpty("blueprint defaults"))}",
-                    beforeJson, afterJson, ValuePhase, ctx => SetValues(ctx, Need(ctx), path, values), [objectItem]);
+                    existing is null ? null : beforeJson, afterJson, ValuePhase, ctx => SetValues(ctx, Need(ctx), path, values), [objectItem]);
         }
 
         if (node.AlarmPriorities is { } priorities)
@@ -649,7 +651,7 @@ public sealed partial class DesignPlanner
             var afterJson = new JsonObject { ["alarmPriorities"] = DesignDocument.ToJson(after) };
             if (problems.Count > 0 || !JsonNode.DeepEquals(beforeJson, afterJson))
                 Add($"object:{path}:alarmPriorities", existing is null ? ChangeKinds.Create : ChangeKinds.Update, ChangeAreas.AlarmPriorities, path, path,
-                    $"Set alarm priorities of {path}", beforeJson, afterJson, ValuePhase, ctx =>
+                    $"Set alarm priorities of {path}", existing is null ? null : beforeJson, afterJson, ValuePhase, ctx =>
                     {
                         var id = Need(ctx);
                         var control = ctx.Project.Get<ControlModule>(id);
