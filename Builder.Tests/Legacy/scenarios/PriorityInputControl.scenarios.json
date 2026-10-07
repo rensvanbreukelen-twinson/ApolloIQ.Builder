@@ -1,0 +1,156 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "PriorityInputControl",
+  "scenarios": [
+    {
+      "name": "Wheelhouse lift: the wheelhouse wins and the loser must press again",
+      "instances": [
+        { "name": "LIFT", "pic": { "onLabel": "Up", "offLabel": "Down", "rows": [
+          { "name": "WH_buttons", "source": "Hardwired", "kind": "Hold", "on": 1, "off": 1 },
+          { "name": "WH_hmi", "source": "Hmi", "kind": "Hold", "on": 2, "off": 2 },
+          { "name": "ECR_hmi", "source": "Hmi", "kind": "Hold", "on": 3, "off": 3 } ] } }
+      ],
+      "steps": [
+        { "set": { "SET.output_kind": 1 } },
+        { "run": 1 },
+        { "expect": ["STS.state = Available", "NOT OUT.set_on", "NOT OUT.set_off"] },
+        { "set": { "CMD.ECR_hmi_off": true } },
+        { "run": 1 },
+        { "expect": ["OUT.set_off", "STS.active_input = 3"] },
+        { "set": { "CMD.WH_buttons_on": true, "CMD.ECR_hmi_off": true } },
+        { "run": 1 },
+        { "expect": ["OUT.set_on", "NOT OUT.set_off", "STS.active_input = 1"] },
+        { "set": { "CMD.ECR_hmi_off": true } },
+        { "run": 1 },
+        { "expect": ["NOT OUT.set_on", "NOT OUT.set_off"] },
+        { "set": { "CMD.ECR_hmi_off": true } },
+        { "run": 1 },
+        { "expect": "NOT OUT.set_off" },
+        { "run": "0.6 s" },
+        { "set": { "CMD.ECR_hmi_off": true } },
+        { "run": 1 },
+        { "expect": ["OUT.set_off", "STS.active_input = 3"] }
+      ]
+    },
+    {
+      "name": "HMI hold requests stay active between heartbeats",
+      "instances": [
+        { "name": "LIFT", "pic": { "onLabel": "Up", "offLabel": "Down", "rows": [
+          { "name": "ECR_hmi", "source": "Hmi", "kind": "Hold", "on": 1, "off": 1 } ] } }
+      ],
+      "steps": [
+        { "set": { "SET.output_kind": 1, "CMD.ECR_hmi_on": true } },
+        { "run": "0.2 s" },
+        { "expect": "OUT.set_on" },
+        { "set": { "CMD.ECR_hmi_on": true } },
+        { "run": "0.4 s" },
+        { "expect": "OUT.set_on" },
+        { "run": "0.2 s" },
+        { "expect": "NOT OUT.set_on" }
+      ]
+    },
+    {
+      "name": "Trash compactor: open beats close from anywhere",
+      "instances": [
+        { "name": "TC", "pic": { "onLabel": "Open", "offLabel": "Close", "rows": [
+          { "name": "LOCAL_panel", "source": "Hardwired", "kind": "Hold", "on": 1, "off": 2 },
+          { "name": "HMI", "source": "Hmi", "kind": "Pulse", "on": 1, "off": 2 } ] } }
+      ],
+      "steps": [
+        { "set": { "SET.output_kind": 1, "CMD.LOCAL_panel_off": true } },
+        { "run": 1 },
+        { "expect": "OUT.set_off" },
+        { "set": { "CMD.LOCAL_panel_off": true, "CMD.HMI_on": true } },
+        { "run": 1 },
+        { "expect": ["OUT.set_on", "NOT OUT.set_off", "STS.active_input = 2"] }
+      ]
+    },
+    {
+      "name": "Pulse output gives one cycle per win",
+      "instances": [
+        { "name": "V", "pic": { "onLabel": "Open", "offLabel": "Close", "rows": [
+          { "name": "BTN", "source": "Hardwired", "kind": "Hold", "on": 1, "off": 1 } ] } }
+      ],
+      "steps": [
+        { "set": { "CMD.BTN_on": true } },
+        { "run": 1 },
+        { "expect": "OUT.set_on" },
+        { "set": { "CMD.BTN_on": true } },
+        { "run": 1 },
+        { "expect": "NOT OUT.set_on" }
+      ]
+    },
+    {
+      "name": "Tie in the same cycle gives no output",
+      "instances": [
+        { "name": "V", "pic": { "onLabel": "Open", "offLabel": "Close", "rows": [
+          { "name": "A", "source": "Hardwired", "kind": "Pulse", "on": 1, "off": 1 },
+          { "name": "B", "source": "Hardwired", "kind": "Pulse", "on": 1, "off": 1 } ] } }
+      ],
+      "steps": [
+        { "set": { "CMD.A_on": true, "CMD.B_off": true } },
+        { "run": 1 },
+        { "expect": ["NOT OUT.set_on", "NOT OUT.set_off"] }
+      ]
+    },
+    {
+      "name": "Valve in auto: override closes it and asks for manual",
+      "instances": [
+        { "name": "V12", "pic": { "onLabel": "Open", "offLabel": "Close", "rows": [
+          { "name": "auto", "source": "Auto", "kind": "Hold", "on": 3, "off": 3, "inAuto": "Only" },
+          { "name": "HMI", "source": "Hmi", "kind": "Pulse", "on": 2, "off": 2, "inAuto": "Ignore" },
+          { "name": "OVR_close", "source": "Hardwired", "kind": "Hold", "off": 1, "inAuto": "Override" } ] } }
+      ],
+      "steps": [
+        { "set": { "SET.output_kind": 1, "CMD.auto_active": true, "CMD.auto_on": true, "CMD.HMI_off": true } },
+        { "run": 1 },
+        { "expect": ["OUT.set_on", "STS.active_input = 1", "NOT STS.override"] },
+        { "set": { "CMD.auto_active": true, "CMD.auto_on": true, "CMD.OVR_close_off": true } },
+        { "run": 1 },
+        { "expect": ["OUT.set_off", "STS.override"] },
+        { "set": { "CMD.auto_on": true } },
+        { "run": 1 },
+        { "expect": ["NOT OUT.set_on", "NOT STS.override"] },
+        { "set": { "CMD.HMI_on": true } },
+        { "run": 1 },
+        { "expect": "OUT.set_on" }
+      ]
+    },
+    {
+      "name": "Disabled PIC gives no output",
+      "instances": [
+        { "name": "V", "pic": { "onLabel": "Open", "offLabel": "Close", "rows": [
+          { "name": "BTN", "source": "Hardwired", "kind": "Pulse", "on": 1, "off": 1 } ] } }
+      ],
+      "steps": [
+        { "force": { "STS.enabled": false } },
+        { "set": { "CMD.BTN_on": true } },
+        { "run": 1 },
+        { "expect": ["STS.state = Unavailable", "NOT OUT.set_on"] },
+        { "release": "STS.enabled" },
+        { "set": { "CMD.BTN_on": true } },
+        { "run": 1 },
+        { "expect": ["STS.state = Available", "OUT.set_on"] }
+      ]
+    },
+    {
+      "name": "PIC drives a breaker through Direct wires",
+      "instances": [
+        { "name": "CB", "type": "CircuitBreaker", "wires": [
+          { "source": "PIC.OUT.set_on", "mode": "Direct", "command": "set_on" },
+          { "source": "PIC.OUT.set_off", "mode": "Direct", "command": "set_off" } ] },
+        { "name": "PIC", "pic": { "onLabel": "Start", "offLabel": "Stop", "rows": [
+          { "name": "WH", "source": "Hmi", "kind": "Pulse", "on": 1, "off": 1 } ] } }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "set": { "PIC.CMD.WH_on": true } },
+        { "run": 3 },
+        { "expect": "is_closed" },
+        { "set": { "PIC.CMD.WH_off": true } },
+        { "run": 3 },
+        { "expect": "is_open" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <RootNamespace>Builder.Core</RootNamespace>
+    </PropertyGroup>
+</Project>

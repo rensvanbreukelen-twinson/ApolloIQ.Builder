@@ -1,0 +1,29 @@
+{
+  "schema": "apolloiq.cmtype/1",
+  "name": "PriorityInputControl",
+  "version": "1.0.0",
+  "description": "Chooses which command request wins when several sources can operate one CM (priority matrix, re-press rule, auto override). Configure its rows in the Builder; wire OUT.set_on and OUT.set_off to the target CM with Direct wires.",
+  "builtin": "PriorityInputControl",
+  "enums": {
+    "OutputKind": [
+      { "name": "Pulse", "value": 0 },
+      { "name": "Level", "value": 1 }
+    ]
+  },
+  "tags": {
+    "CMD": [
+      { "name": "auto_active", "type": "Bool", "description": "Auto is active; wire it Direct from the Unit or auto function" }
+    ],
+    "OUT": [
+      { "name": "set_on", "type": "Bool", "description": "Winning on request (start, open, enable, up)" },
+      { "name": "set_off", "type": "Bool", "description": "Winning off request (stop, close, disable, down)" }
+    ],
+    "SET": [
+      { "name": "output_kind", "type": "Enum", "enum": "OutputKind", "initial": "Pulse", "description": "Pulse: one cycle when a request wins. Level: on while the winning request is held." }
+    ],
+    "STS": [
+      { "name": "active_input", "type": "Int16", "description": "Row that last won (1 = first row, 0 = none)" },
+      { "name": "override", "type": "Bool", "description": "An Override row acts while auto is active" }
+    ]
+  }
+}

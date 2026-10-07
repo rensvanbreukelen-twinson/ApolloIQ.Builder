@@ -1,0 +1,105 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "PushButton",
+  "scenarios": [
+    {
+      "name": "Press and release",
+      "steps": [
+        { "run": 1 },
+        { "expect": "STS.state = Available" },
+        { "force": { "FIN.pressed": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Running" },
+        { "force": { "FIN.pressed": false } },
+        { "run": 1 },
+        { "expect": "STS.state = Available" },
+        { "bad": "FIN.pressed" },
+        { "run": 1 },
+        { "expect": "STS.state = Unavailable" },
+        { "good": "FIN.pressed" },
+        { "run": 1 },
+        { "expect": "STS.state = Available" },
+        { "force": { "STS.enabled": false } },
+        { "run": 1 },
+        { "expect": "STS.state = Unavailable" },
+        { "release": "STS.enabled" },
+        { "force": { "FIN.pressed": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Running" }
+      ]
+    },
+    {
+      "name": "Momentary button toggles a breaker",
+      "instances": [
+        { "name": "CB", "type": "CircuitBreaker", "wires": [ { "source": "BTN.INT.pressed", "mode": "Toggle" } ] },
+        { "name": "BTN", "type": "PushButton" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "expect": "STS.state = Available" },
+        { "force": { "BTN.FIN.pressed": true } },
+        { "run": 3 },
+        { "expect": "is_closed" },
+        { "force": { "BTN.FIN.pressed": false } },
+        { "run": 3 },
+        { "expect": "is_closed" },
+        { "force": { "BTN.FIN.pressed": true } },
+        { "run": 3 },
+        { "expect": "is_open" }
+      ]
+    },
+    {
+      "name": "Maintained switch follows its position",
+      "instances": [
+        { "name": "CB", "type": "CircuitBreaker", "wires": [ { "source": "SW.INT.pressed", "mode": "Maintained" } ] },
+        { "name": "SW", "type": "PushButton" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "force": { "SW.FIN.pressed": true } },
+        { "run": 3 },
+        { "expect": "is_closed" },
+        { "force": { "SW.FIN.pressed": false } },
+        { "run": 3 },
+        { "expect": "is_open" }
+      ]
+    },
+    {
+      "name": "Separate on and off buttons",
+      "instances": [
+        { "name": "CB", "type": "CircuitBreaker", "wires": [ { "source": "ON.INT.pressed", "mode": "On" }, { "source": "OFF.INT.pressed", "mode": "Off" } ] },
+        { "name": "ON", "type": "PushButton" },
+        { "name": "OFF", "type": "PushButton" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "force": { "ON.FIN.pressed": true } },
+        { "run": 3 },
+        { "expect": "is_closed" },
+        { "force": { "ON.FIN.pressed": false, "OFF.FIN.pressed": true } },
+        { "run": 3 },
+        { "expect": "is_open" }
+      ]
+    },
+    {
+      "name": "Direct wire writes a command every cycle",
+      "instances": [
+        { "name": "CB", "type": "CircuitBreaker", "wires": [ { "source": "RST.INT.pressed", "mode": "Direct", "command": "reset" } ] },
+        { "name": "RST", "type": "PushButton" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 2 },
+        { "force": { "FIN.tripped": true } },
+        { "run": 2 },
+        { "release": "FIN.tripped" },
+        { "run": 2 },
+        { "expect": "STS.state = Shutdown" },
+        { "force": { "RST.FIN.pressed": true } },
+        { "run": 2 },
+        { "expect": "STS.state = Available" }
+      ]
+    }
+  ]
+}

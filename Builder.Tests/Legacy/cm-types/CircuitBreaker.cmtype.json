@@ -1,0 +1,114 @@
+{
+  "schema": "apolloiq.cmtype/1",
+  "name": "CircuitBreaker",
+  "version": "1.3.0",
+  "description": "Generic breaker: generator, bus-tie, shore connection, feeders and consumers",
+  "aliases": {
+    "is_closed": "is_running",
+    "is_open": "is_off"
+  },
+  "tags": {
+    "FIN": [
+      { "name": "feedback", "type": "Bool", "source": "hardwired", "description": "Breaker closed (auxiliary contact)" },
+      { "name": "power_ok", "type": "Bool", "source": "hardwired", "description": "Breaker control power OK" },
+      { "name": "tripped", "type": "Bool", "source": "hardwired", "description": "Trip indication" },
+      { "name": "spring_charged", "type": "Bool", "source": "hardwired", "optional": true, "absent": true, "description": "Closing spring charged" },
+      { "name": "remote", "type": "Bool", "source": "hardwired", "description": "Local/remote selector in remote" },
+      { "name": "current", "type": "Real", "unit": "A", "source": "hardwired", "optional": true, "description": "Load current" }
+    ],
+    "CMD": [
+      { "name": "set_on", "type": "Bool", "description": "Close request" },
+      { "name": "set_off", "type": "Bool", "description": "Open request" },
+      { "name": "reset", "type": "Bool", "description": "Reset a latched trip" }
+    ],
+    "OUT": [
+      { "name": "coil_on", "type": "Bool", "description": "Closing coil" },
+      { "name": "coil_off", "type": "Bool", "description": "Opening (shunt) coil; also resets a bistable breaker" }
+    ],
+    "LOK": [
+      { "name": "can_on", "type": "Bool", "initial": true, "description": "May close" },
+      { "name": "trip", "type": "Bool", "initial": false, "description": "Forces open (trip)" },
+      { "name": "can_off", "type": "Bool", "initial": true, "description": "May open" },
+      { "name": "can_on_status", "type": "Int32", "initial": 0, "description": "Bit n = Switch on interlock n met" },
+      { "name": "can_off_status", "type": "Int32", "initial": 0, "description": "Bit n = Switch off interlock n met" }
+    ],
+    "PAR": [
+      { "name": "mean_switch_count_to_failure", "type": "Int32", "initial": 10000, "description": "Maintenance threshold" },
+      { "name": "max_close_time", "type": "Real", "unit": "s", "initial": 1.0, "description": "Close command to feedback true" },
+      { "name": "max_open_time", "type": "Real", "unit": "s", "initial": 1.0, "description": "Open command to feedback false" },
+      { "name": "pulse_time", "type": "Real", "unit": "s", "initial": 0.5, "description": "Coil pulse length (bistable)" },
+      { "name": "spring_charge_time", "type": "Real", "unit": "s", "initial": 15, "description": "Spring charged within this time after an operation" },
+      { "name": "current_H", "type": "Real", "unit": "A", "optional": true, "description": "Overcurrent warning limit" },
+      { "name": "current_H_delay", "type": "Real", "unit": "s", "initial": 5, "optional": true, "description": "Delay for current_H" }
+    ],
+    "SET": [
+      { "name": "invert_output", "type": "Bool", "initial": false, "description": "Invert both coil outputs" },
+      { "name": "bistable", "type": "Bool", "initial": false, "description": "Coil behaviour: pulses instead of a held coil" },
+      { "name": "trip_latches", "type": "Bool", "initial": true, "description": "After a trip, CMD.reset is required before closing again" }
+    ],
+    "PMT": [
+      { "name": "switch_count", "type": "Int32", "description": "Number of close operations" },
+      { "name": "trip_count", "type": "Int32", "description": "Number of trips" },
+      { "name": "closed_hours", "type": "Real", "unit": "h", "description": "Total time closed" },
+      { "name": "avg_close_time", "type": "Real", "unit": "ms", "description": "Rolling average close time" }
+    ],
+    "INT": [
+      { "name": "state_timer", "type": "Real", "unit": "s", "description": "Time in the current state" },
+      { "name": "pulse_timer", "type": "Real", "unit": "s", "description": "Coil pulse timer (bistable)" },
+      { "name": "trip_latched", "type": "Bool", "description": "Set by the rising edge of tripped; cleared by CMD.reset" }
+    ]
+  },
+  "logic": {
+    "plant": [
+      { "set": "FIN.power_ok", "expr": "NOT SET.invert_power_ok" },
+      { "set": "FIN.remote", "expr": "NOT SET.invert_remote" },
+      { "set": "FIN.spring_charged", "expr": "TRUE" },
+      { "set": "FIN.feedback", "expr": "(NOT (FIN.tripped XOR SET.invert_tripped) AND SEL(SET.bistable, OUT.coil_on XOR SET.invert_output, ((OUT.coil_on XOR SET.invert_output) OR (FIN.feedback XOR SET.invert_feedback)) AND NOT (OUT.coil_off XOR SET.invert_output))) XOR SET.invert_feedback" }
+    ],
+    "before": [
+      { "set": "STS.remote_ok", "expr": "SEL(GOOD(FIN.feedback) AND GOOD(FIN.remote) AND GOOD(FIN.power_ok), FALSE, STS.enabled AND INT.remote AND INT.power_ok)" },
+      { "block": "SR", "id": "trip_latch", "in": { "S1": "INT.tripped AND SET.trip_latches", "R": "CMD.reset" }, "out": { "Q1": "INT.trip_latched" } }
+    ],
+    "stateMachine": {
+      "transitions": [
+        { "from": "*", "to": "Unavailable", "priority": 0, "guard": "NOT STS.enabled OR NOT GOOD(FIN.feedback)", "name": "disabled or position unknown" },
+        { "from": "Unavailable", "to": "Running", "priority": 1, "guard": "STS.enabled AND INT.feedback", "name": "reporting again, closed" },
+        { "from": "Unavailable", "to": "Stopped", "priority": 2, "guard": "STS.enabled AND GOOD(FIN.feedback)", "name": "reporting again" },
+        { "from": ["Starting", "Running", "Stopping"], "to": "Shutdown", "priority": 1, "guard": "INT.tripped", "name": "tripped" },
+        { "from": "Shutdown", "to": "Stopped", "priority": 1, "guard": "NOT INT.tripped AND NOT INT.trip_latched", "name": "reset" },
+        { "from": ["Stopped", "Available"], "to": "Running", "priority": 2, "guard": "INT.feedback", "name": "closed locally" },
+        { "from": "Stopped", "to": "Available", "priority": 3, "guard": "INT.spring_charged AND NOT INT.trip_latched", "name": "ready" },
+        { "from": "Available", "to": "Stopped", "priority": 3, "guard": "NOT INT.spring_charged OR INT.trip_latched", "name": "not ready" },
+        { "from": "Available", "to": "Starting", "priority": 4, "guard": "STS.remote_ok AND LOK.can_on AND CMD.set_on", "name": "close" },
+        { "from": "Starting", "to": "Running", "priority": 2, "guard": "INT.feedback", "name": "closed" },
+        { "from": "Starting", "to": "Stopped", "priority": 3, "guard": "STATE_TIME() > PAR.max_close_time", "name": "not closing" },
+        { "from": "Starting", "to": "Stopped", "priority": 4, "guard": "NOT STS.remote_ok OR CMD.set_off", "name": "close aborted" },
+        { "from": "Running", "to": "Stopping", "priority": 2, "guard": "STS.remote_ok AND ((CMD.set_off AND LOK.can_off) OR LOK.trip)", "name": "open" },
+        { "from": "Running", "to": "Stopped", "priority": 3, "guard": "NOT INT.feedback", "name": "opened unexpectedly" },
+        { "from": "Stopping", "to": "Stopped", "priority": 2, "guard": "NOT INT.feedback", "name": "opened" },
+        { "from": "Stopping", "to": "Running", "priority": 3, "guard": "NOT STS.remote_ok AND INT.feedback", "name": "taken over locally" }
+      ]
+    },
+    "after": [
+      { "set": "OUT.coil_on", "expr": "SEL(STS.state = Unavailable AND NOT SET.bistable, SEL(SET.bistable, STS.state = Starting OR STS.state = Running, STS.state = Starting AND STATE_TIME() < PAR.pulse_time) XOR SET.invert_output, OUT.coil_on)" },
+      { "set": "OUT.coil_off", "expr": "SEL(SET.bistable, FALSE, STS.state = Stopping AND STATE_TIME() < PAR.pulse_time) XOR SET.invert_output" },
+      { "set": "INT.state_timer", "expr": "STATE_TIME()" },
+      { "set": "INT.pulse_timer", "expr": "SEL(SET.bistable AND (STS.state = Starting OR STS.state = Stopping), 0, MIN(STATE_TIME(), PAR.pulse_time))" },
+      { "block": "CTU", "id": "switchings", "in": { "CU": "INT.feedback" }, "out": { "CV": "PMT.switch_count" } },
+      { "block": "CTU", "id": "trips", "in": { "CU": "INT.tripped" }, "out": { "CV": "PMT.trip_count" } },
+      { "block": "RUNTIME", "id": "closed_hours", "in": { "IN": "INT.feedback" }, "out": { "HOURS": "PMT.closed_hours" } }
+    ]
+  },
+  "alarms": [
+    {"name": "NotClosing", "severity": 20, "message": {"en": "Not closing"}, "onTransition": "not closing"},
+    {"name": "NotOpening", "severity": 25, "message": {"en": "Not opening"}, "watchdog": {"while": "STS.state = Stopping AND INT.feedback", "timeout": "PAR.max_open_time"}},
+    {"name": "Tripped", "severity": 25, "message": {"en": "Tripped"}, "condition": "INT.tripped", "latch": "SET.trip_latches"},
+    {"name": "OpenedUnexpectedly", "severity": 20, "message": {"en": "Opened unexpectedly"}, "onTransition": "opened unexpectedly", "condition": "STS.remote_ok"},
+    {"name": "ClosedUnexpectedly", "severity": 20, "message": {"en": "Closed unexpectedly"}, "onTransition": "closed locally", "condition": "STS.remote_ok"},
+    {"name": "ControlPowerFailure", "severity": 20, "message": {"en": "Control power failure"}, "condition": "NOT INT.power_ok"},
+    {"name": "SpringNotCharged", "severity": 10, "message": {"en": "Spring not charged"}, "watchdog": {"while": "NOT INT.spring_charged", "timeout": "PAR.spring_charge_time"}, "requires": "FIN.spring_charged"},
+    {"name": "InLocal", "severity": 5, "message": {"en": "In local"}, "condition": "NOT INT.remote"},
+    {"name": "Overcurrent", "severity": 15, "message": {"en": "Overcurrent"}, "limit": {"input": "FIN.current", "above": "PAR.current_H", "delay": "PAR.current_H_delay"}, "requires": "FIN.current"},
+    {"name": "UsefulLifeReached", "severity": 0, "message": {"en": "Useful life reached"}, "condition": "PMT.switch_count > PAR.mean_switch_count_to_failure", "runsOn": "SCADA"}
+  ]
+}

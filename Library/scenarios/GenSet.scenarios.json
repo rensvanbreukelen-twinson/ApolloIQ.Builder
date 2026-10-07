@@ -1,0 +1,549 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "GenSet",
+  "scenarios": [
+    {
+      "name": "Start, ready to connect, stop through the cooldown",
+      "steps": [
+        {
+          "set": {
+            "PAR.cooldown_time": 2
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "STS.state = Available",
+            "STS.remote_ok"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "STS.state = Starting"
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "until": "STS.state = ReadyToConnect",
+          "within": "6 s"
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "STS.state = CoolingDown",
+          "within": "0.5 s"
+        },
+        {
+          "until": "STS.state = StoppingEngine",
+          "within": "2.5 s"
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "OUT.stop_request"
+        },
+        {
+          "until": "STS.state = Available",
+          "within": "1 s"
+        },
+        {
+          "expect": [
+            "NOT FIN.running",
+            "NOT OUT.stop_request"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Fast stop when it trips",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "force": {
+            "LOK.trip": true
+          }
+        },
+        {
+          "until": "STS.state = StoppingEngine",
+          "within": "0.5 s"
+        },
+        {
+          "expect": "INT.fast_stop"
+        },
+        {
+          "until": "STS.state = Stopped",
+          "within": "1 s"
+        }
+      ]
+    },
+    {
+      "name": "Fast stop during the cooldown",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "STS.state = CoolingDown",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "LOK.trip": true
+          }
+        },
+        {
+          "until": "STS.state = StoppingEngine",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "No cooldown when it is disabled",
+      "steps": [
+        {
+          "set": {
+            "SET.cooldown_enabled": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "STS.state = StoppingEngine",
+          "within": "0.5 s"
+        },
+        {
+          "until": "STS.state = Available",
+          "within": "1 s"
+        }
+      ]
+    },
+    {
+      "name": "Not unloaded: stops after the unload timeout",
+      "steps": [
+        {
+          "set": {
+            "PAR.max_unload_time": 1
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "force": {
+            "FIN.active_power": 300
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "STS.state = Unloading",
+          "within": "0.2 s"
+        },
+        {
+          "until": "STS.state = StoppingEngine",
+          "within": "1.5 s"
+        },
+        {
+          "expect": "ALM.NotUnloaded.active"
+        }
+      ]
+    },
+    {
+      "name": "Fail to start",
+      "steps": [
+        {
+          "set": {
+            "PAR.max_start_time": 1
+          }
+        },
+        {
+          "force": {
+            "FIN.running": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Stopped",
+          "within": "1.5 s"
+        },
+        {
+          "expect": "ALM.FailToStart.active"
+        },
+        {
+          "release": "FIN.running"
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "NOT ALM.FailToStart.active",
+            "STS.state = Available"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Start aborted by a stop command",
+      "steps": [
+        {
+          "force": {
+            "FIN.running": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "STS.state = Starting"
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "STS.state = Stopped"
+        }
+      ]
+    },
+    {
+      "name": "Stopped unexpectedly",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "force": {
+            "FIN.running": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "is_off",
+            "ALM.StoppedUnexpectedly.active"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "NOT ALM.StoppedUnexpectedly.active"
+        }
+      ]
+    },
+    {
+      "name": "Engine shutdown is latched until a reset",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "force": {
+            "FIN.shutdown_active": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": [
+            "STS.state = Shutdown",
+            "ALM.EngineShutdown.active"
+          ]
+        },
+        {
+          "release": "FIN.shutdown_active"
+        },
+        {
+          "run": 3
+        },
+        {
+          "expect": [
+            "STS.state = Shutdown",
+            "ALM.EngineShutdown.active"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "until": "STS.state = Available",
+          "within": "0.5 s"
+        },
+        {
+          "expect": "NOT ALM.EngineShutdown.active"
+        }
+      ]
+    },
+    {
+      "name": "Started locally",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.running": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "STS.state = Running"
+        }
+      ]
+    },
+    {
+      "name": "Not ready while the controller blocks a start",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.ready": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "STS.state = Stopped"
+        },
+        {
+          "release": "FIN.ready"
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "STS.state = Available"
+        }
+      ]
+    },
+    {
+      "name": "Back to Running when the voltage leaves its range",
+      "steps": [
+        {
+          "set": {
+            "PAR.stable_time": 1
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = ReadyToConnect",
+          "within": "6 s"
+        },
+        {
+          "force": {
+            "FIN.voltage": 300
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "STS.state = Running",
+            "NOT INT.v_ok"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Taken over locally during the cooldown",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Running",
+          "within": "4 s"
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "STS.state = CoolingDown",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "FIN.in_auto": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "STS.state = Running",
+            "NOT STS.remote_ok",
+            "ALM.NotInAuto.active"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Unavailable while the controller is not reporting",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "bad": "FIN.running"
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": [
+            "STS.state = Unavailable",
+            "ALM.ControllerCommunicationLost.active"
+          ]
+        },
+        {
+          "good": "FIN.running"
+        },
+        {
+          "until": "STS.state = Available",
+          "within": "0.5 s"
+        }
+      ]
+    }
+  ]
+}

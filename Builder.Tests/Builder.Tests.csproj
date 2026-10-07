@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <RootNamespace>Builder.Tests</RootNamespace>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Builder.Core\Builder.Core.csproj" />
+        <ProjectReference Include="..\Builder.Persistence\Builder.Persistence.csproj" />
+        <ProjectReference Include="..\Builder.Backend\Builder.Backend.csproj" />
+        <ProjectReference Include="..\Builder.Logic\Builder.Logic.csproj" />
+        <ProjectReference Include="..\Builder.Simulator\Builder.Simulator.csproj" />
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    </ItemGroup>
+    <ItemGroup>
+        <None Include="..\Library\cm-types\*.cmtype.json" LinkBase="cm-types" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="Legacy\cm-types\*.cmtype.json" Link="cm-types\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="Legacy\scenarios\*.scenarios.json" Link="scenarios\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\Library\scenarios\*.scenarios.json" LinkBase="blueprint-scenarios" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\Library\blueprints\*.blueprint.json" LinkBase="blueprints" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\Library\examples\*.example.json" LinkBase="examples" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="Golden\*.json" />
+    </ItemGroup>
+    <ItemGroup>
+      <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+      <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
+        <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        <PrivateAssets>all</PrivateAssets>
+      </PackageReference>
+      <PackageReference Include="xunit.v3" Version="4.0.1" />
+    </ItemGroup>
+</Project>

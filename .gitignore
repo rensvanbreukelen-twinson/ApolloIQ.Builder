@@ -1,0 +1,10 @@
+bin/
+obj/
+TestResults/
+.idea/
+*.DotSettings.user
+.DS_Store
+node_modules/
+Builder.Frontend/dist/
+Builder.Frontend/.vite/
+Builder.Backend/projects/

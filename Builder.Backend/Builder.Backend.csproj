@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+    <PropertyGroup>
+        <RootNamespace>Builder.Backend</RootNamespace>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Builder.Core\Builder.Core.csproj"/>
+        <ProjectReference Include="..\Builder.Persistence\Builder.Persistence.csproj"/>
+        <ProjectReference Include="..\Builder.Simulator\Builder.Simulator.csproj"/>
+    </ItemGroup>
+</Project>

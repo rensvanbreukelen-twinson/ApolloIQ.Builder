@@ -1,0 +1,511 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "CircuitBreaker",
+  "scenarios": [
+    {
+      "name": "Close and open on command",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "STS.state = Open",
+            "STS.remote_ok",
+            "is_open"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Closed",
+          "within": "0.5 s"
+        },
+        {
+          "expect": [
+            "OUT.coil_on",
+            "is_closed"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "STS.state = Opening",
+          "within": "0.2 s"
+        },
+        {
+          "until": "STS.state = Open",
+          "within": "0.5 s"
+        },
+        {
+          "expect": [
+            "NOT FIN.feedback",
+            "NOT OUT.coil_on"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Opens when it trips",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Closed",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "LOK.trip": true
+          }
+        },
+        {
+          "until": "STS.state = Opening",
+          "within": "0.2 s"
+        },
+        {
+          "until": "STS.state = Open",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Close is refused when closing is not allowed",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "LOK.can_on": false
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "run": 3
+        },
+        {
+          "expect": "STS.state = Open"
+        }
+      ]
+    },
+    {
+      "name": "Latched trip needs a reset",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Closed",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "FIN.tripped": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": [
+            "STS.state = Tripped",
+            "INT.trip_latched",
+            "ALM.Tripped.active"
+          ]
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "NOT FIN.feedback"
+        },
+        {
+          "release": "FIN.tripped"
+        },
+        {
+          "run": "0.5 s"
+        },
+        {
+          "expect": [
+            "STS.state = Tripped",
+            "ALM.Tripped.active"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "until": "STS.state = Open",
+          "within": "0.5 s"
+        },
+        {
+          "expect": "NOT ALM.Tripped.active"
+        }
+      ]
+    },
+    {
+      "name": "A trip while open makes the breaker not ready",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.tripped": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "STS.state = OpenNotReady"
+        },
+        {
+          "release": "FIN.tripped"
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "until": "STS.state = Open",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Not closing: timeout back to not ready",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.feedback": false
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "STS.state = Closing"
+        },
+        {
+          "until": "STS.state = OpenNotReady",
+          "within": "1.5 s"
+        },
+        {
+          "expect": "ALM.NotClosing.active"
+        },
+        {
+          "release": "FIN.feedback"
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "NOT ALM.NotClosing.active",
+            "STS.state = Open"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Close aborted by an open command",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.feedback": false
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "STS.state = Closing"
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "STS.state = OpenNotReady"
+        }
+      ]
+    },
+    {
+      "name": "Opened unexpectedly raises a latched alarm",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Closed",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "FIN.feedback": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "is_open",
+            "ALM.OpenedUnexpectedly.active"
+          ]
+        },
+        {
+          "release": "FIN.feedback"
+        },
+        {
+          "run": 3
+        },
+        {
+          "expect": "ALM.OpenedUnexpectedly.active"
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "NOT ALM.OpenedUnexpectedly.active"
+        }
+      ]
+    },
+    {
+      "name": "Closed locally raises an alarm",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.feedback": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "STS.state = Closed",
+            "ALM.ClosedUnexpectedly.active"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Taken over locally while opening",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Closed",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "FIN.feedback": true
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "STS.state = Opening"
+        },
+        {
+          "force": {
+            "FIN.remote": false
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "STS.state = Closed"
+        }
+      ]
+    },
+    {
+      "name": "Not opening alarm while the breaker stays closed",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Closed",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "FIN.feedback": true
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "run": "1.2 s"
+        },
+        {
+          "expect": [
+            "STS.state = Opening",
+            "ALM.NotOpening.active"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Unavailable while the feedback is bad",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "bad": "FIN.feedback"
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "STS.state = Unavailable"
+        },
+        {
+          "good": "FIN.feedback"
+        },
+        {
+          "until": "STS.state = Open",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Bistable breaker pulses its coils",
+      "steps": [
+        {
+          "set": {
+            "SET.bistable": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "STS.state = Closed",
+          "within": "0.5 s"
+        },
+        {
+          "run": "1 s"
+        },
+        {
+          "expect": [
+            "STS.state = Closed",
+            "NOT OUT.coil_on"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": [
+            "STS.state = Opening",
+            "OUT.coil_off"
+          ]
+        },
+        {
+          "until": "STS.state = Open",
+          "within": "0.5 s"
+        }
+      ]
+    }
+  ]
+}

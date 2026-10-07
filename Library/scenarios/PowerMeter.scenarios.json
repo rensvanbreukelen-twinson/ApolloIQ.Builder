@@ -1,0 +1,107 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "PowerMeter",
+  "scenarios": [
+    {
+      "name": "Measuring while healthy, Unavailable without communication",
+      "steps": [
+        {
+          "run": 3
+        },
+        {
+          "expect": "STS.state = Measuring"
+        },
+        {
+          "bad": [
+            "FIN.healthy"
+          ]
+        },
+        {
+          "run": 3
+        },
+        {
+          "expect": "STS.state = Unavailable"
+        },
+        {
+          "good": [
+            "FIN.healthy"
+          ]
+        },
+        {
+          "run": 3
+        },
+        {
+          "expect": "STS.state = Measuring"
+        }
+      ]
+    },
+    {
+      "name": "Overcurrent after the delay",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "PAR.alarm_delay": 1
+          }
+        },
+        {
+          "force": {
+            "FIN.active_power": 700
+          }
+        },
+        {
+          "run": 5
+        },
+        {
+          "expect": [
+            "NOT ALM.Overcurrent.active",
+            "STS.load_pct = 140"
+          ]
+        },
+        {
+          "until": "ALM.Overcurrent.active",
+          "within": "2 s"
+        }
+      ]
+    },
+    {
+      "name": "Low voltage alarm only while the bus is live",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "PAR.alarm_delay": 1
+          }
+        },
+        {
+          "force": {
+            "FIN.voltage_l1": 0,
+            "FIN.voltage_l2": 0,
+            "FIN.voltage_l3": 0
+          }
+        },
+        {
+          "run": 40
+        },
+        {
+          "expect": "NOT ALM.Undervoltage.active"
+        },
+        {
+          "force": {
+            "FIN.voltage_l1": 190,
+            "FIN.voltage_l2": 230,
+            "FIN.voltage_l3": 230
+          }
+        },
+        {
+          "until": "ALM.Undervoltage.active",
+          "within": "2 s"
+        }
+      ]
+    }
+  ]
+}

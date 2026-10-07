@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <RootNamespace>Builder.Simulator</RootNamespace>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Builder.Core\Builder.Core.csproj"/>
+        <ProjectReference Include="..\Builder.Logic\Builder.Logic.csproj"/>
+    </ItemGroup>
+</Project>

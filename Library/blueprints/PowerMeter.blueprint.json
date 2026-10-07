@@ -1,0 +1,353 @@
+{
+  "schema": "apolloiq.blueprint/1",
+  "kind": "CM",
+  "name": "PowerMeter",
+  "version": "0.1.0",
+  "description": "Three-phase power meter (voltages, currents, frequency, power). Measures only; no commands. State 400 Measuring or 999 Unavailable (G-153).",
+  "interfaces": [
+    "Base"
+  ],
+  "tags": [
+    {
+      "group": "FIN",
+      "name": "healthy",
+      "dataType": "Bool",
+      "description": "Meter reports healthy (communication and self-test OK)",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "voltage_l1",
+      "dataType": "Real",
+      "description": "Voltage L1-N",
+      "unit": "V",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "voltage_l2",
+      "dataType": "Real",
+      "description": "Voltage L2-N",
+      "unit": "V",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "voltage_l3",
+      "dataType": "Real",
+      "description": "Voltage L3-N",
+      "unit": "V",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "current_l1",
+      "dataType": "Real",
+      "description": "Current L1",
+      "unit": "A",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "current_l2",
+      "dataType": "Real",
+      "description": "Current L2",
+      "unit": "A",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "current_l3",
+      "dataType": "Real",
+      "description": "Current L3",
+      "unit": "A",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "frequency",
+      "dataType": "Real",
+      "description": "Frequency",
+      "unit": "Hz",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "active_power",
+      "dataType": "Real",
+      "description": "Active power",
+      "unit": "kW",
+      "source": "External",
+      "primary": true
+    },
+    {
+      "group": "FIN",
+      "name": "reactive_power",
+      "dataType": "Real",
+      "description": "Reactive power",
+      "unit": "kvar",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "FIN",
+      "name": "power_factor",
+      "dataType": "Real",
+      "description": "Power factor",
+      "unit": "",
+      "source": "External",
+      "primary": false
+    },
+    {
+      "group": "SET",
+      "name": "rated_voltage",
+      "dataType": "Real",
+      "description": "Rated voltage (L-N)",
+      "unit": "V",
+      "initial": "230",
+      "primary": false
+    },
+    {
+      "group": "SET",
+      "name": "rated_current",
+      "dataType": "Real",
+      "description": "Rated current",
+      "unit": "A",
+      "initial": "800",
+      "primary": false
+    },
+    {
+      "group": "SET",
+      "name": "rated_frequency",
+      "dataType": "Real",
+      "description": "Rated frequency",
+      "unit": "Hz",
+      "initial": "50",
+      "primary": false
+    },
+    {
+      "group": "SET",
+      "name": "rated_power",
+      "dataType": "Real",
+      "description": "Rated power",
+      "unit": "kW",
+      "initial": "500",
+      "primary": false
+    },
+    {
+      "group": "PAR",
+      "name": "current_H",
+      "dataType": "Real",
+      "description": "Overcurrent limit",
+      "unit": "%",
+      "initial": "110",
+      "primary": false
+    },
+    {
+      "group": "PAR",
+      "name": "voltage_H",
+      "dataType": "Real",
+      "description": "Overvoltage limit",
+      "unit": "%",
+      "initial": "110",
+      "primary": false
+    },
+    {
+      "group": "PAR",
+      "name": "voltage_L",
+      "dataType": "Real",
+      "description": "Undervoltage limit",
+      "unit": "%",
+      "initial": "90",
+      "primary": false
+    },
+    {
+      "group": "PAR",
+      "name": "frequency_H",
+      "dataType": "Real",
+      "description": "Overfrequency limit",
+      "unit": "%",
+      "initial": "105",
+      "primary": false
+    },
+    {
+      "group": "PAR",
+      "name": "frequency_L",
+      "dataType": "Real",
+      "description": "Underfrequency limit",
+      "unit": "%",
+      "initial": "95",
+      "primary": false
+    },
+    {
+      "group": "PAR",
+      "name": "alarm_delay",
+      "dataType": "Real",
+      "description": "Delay before a limit alarm",
+      "unit": "s",
+      "initial": "5",
+      "primary": false
+    },
+    {
+      "group": "STS",
+      "name": "load_pct",
+      "dataType": "Real",
+      "description": "Active power in % of rated power",
+      "unit": "%",
+      "primary": false
+    },
+    {
+      "group": "STS",
+      "name": "current_max",
+      "dataType": "Real",
+      "description": "Highest phase current",
+      "unit": "A",
+      "primary": false
+    },
+    {
+      "group": "STS",
+      "name": "voltage_min",
+      "dataType": "Real",
+      "description": "Lowest phase voltage",
+      "unit": "V",
+      "primary": false
+    },
+    {
+      "group": "STS",
+      "name": "voltage_max",
+      "dataType": "Real",
+      "description": "Highest phase voltage",
+      "unit": "V",
+      "primary": false
+    }
+  ],
+  "roles": [],
+  "states": [
+    {
+      "name": "Measuring",
+      "category": 400,
+      "code": 400,
+      "initial": true,
+      "entry": [],
+      "run": [],
+      "exit": []
+    }
+  ],
+  "transitions": [],
+  "always": [
+    {
+      "tag": "STS.remote_ok",
+      "value": "STS.enabled"
+    },
+    {
+      "tag": "STS.current_max",
+      "value": "MAX(FIN.current_l1, MAX(FIN.current_l2, FIN.current_l3))"
+    },
+    {
+      "tag": "STS.voltage_min",
+      "value": "MIN(FIN.voltage_l1, MIN(FIN.voltage_l2, FIN.voltage_l3))"
+    },
+    {
+      "tag": "STS.voltage_max",
+      "value": "MAX(FIN.voltage_l1, MAX(FIN.voltage_l2, FIN.voltage_l3))"
+    },
+    {
+      "tag": "STS.load_pct",
+      "value": "SEL(SET.rated_power > 0, 0, FIN.active_power / SET.rated_power * 100)"
+    }
+  ],
+  "alarms": [
+    {
+      "name": "Overcurrent",
+      "kind": "NonReactive",
+      "condition": "time(STS.current_max > SET.rated_current * PAR.current_H / 100) > PAR.alarm_delay",
+      "severity": 20,
+      "message": "Overcurrent"
+    },
+    {
+      "name": "Overvoltage",
+      "kind": "NonReactive",
+      "condition": "time(STS.voltage_max > SET.rated_voltage * PAR.voltage_H / 100) > PAR.alarm_delay",
+      "severity": 20,
+      "message": "Overvoltage"
+    },
+    {
+      "name": "Undervoltage",
+      "kind": "NonReactive",
+      "condition": "time(STS.voltage_max > 0.5 * SET.rated_voltage AND STS.voltage_min < SET.rated_voltage * PAR.voltage_L / 100) > PAR.alarm_delay",
+      "severity": 20,
+      "message": "Undervoltage"
+    },
+    {
+      "name": "Overfrequency",
+      "kind": "NonReactive",
+      "condition": "time(STS.voltage_max > 0.5 * SET.rated_voltage AND FIN.frequency > SET.rated_frequency * PAR.frequency_H / 100) > PAR.alarm_delay",
+      "severity": 20,
+      "message": "Overfrequency"
+    },
+    {
+      "name": "Underfrequency",
+      "kind": "NonReactive",
+      "condition": "time(STS.voltage_max > 0.5 * SET.rated_voltage AND FIN.frequency < SET.rated_frequency * PAR.frequency_L / 100) > PAR.alarm_delay",
+      "severity": 20,
+      "message": "Underfrequency"
+    },
+    {
+      "name": "MeterFault",
+      "kind": "NonReactive",
+      "condition": "NOT FIN.healthy",
+      "severity": 10,
+      "message": "Power meter reports a fault"
+    }
+  ],
+  "plant": [
+    {
+      "tag": "FIN.healthy",
+      "value": "TRUE"
+    },
+    {
+      "tag": "FIN.voltage_l1",
+      "value": "SET.rated_voltage"
+    },
+    {
+      "tag": "FIN.voltage_l2",
+      "value": "SET.rated_voltage"
+    },
+    {
+      "tag": "FIN.voltage_l3",
+      "value": "SET.rated_voltage"
+    },
+    {
+      "tag": "FIN.frequency",
+      "value": "SET.rated_frequency"
+    },
+    {
+      "tag": "FIN.current_l1",
+      "value": "FIN.active_power * 1000 / (3 * SET.rated_voltage)"
+    },
+    {
+      "tag": "FIN.current_l2",
+      "value": "FIN.active_power * 1000 / (3 * SET.rated_voltage)"
+    },
+    {
+      "tag": "FIN.current_l3",
+      "value": "FIN.active_power * 1000 / (3 * SET.rated_voltage)"
+    },
+    {
+      "tag": "FIN.reactive_power",
+      "value": "0"
+    },
+    {
+      "tag": "FIN.power_factor",
+      "value": "1"
+    }
+  ]
+}

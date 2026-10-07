@@ -1,0 +1,212 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "CircuitBreaker",
+  "scenarios": [
+    {
+      "name": "Close and open on command",
+      "steps": [
+        { "run": 2 },
+        { "expect": ["STS.state = Available", "STS.remote_ok", "is_open"] },
+        { "set": { "CMD.set_on": true } },
+        { "run": 1 },
+        { "expect": ["STS.state = Starting", "OUT.coil_on"] },
+        { "run": 1 },
+        { "expect": ["is_closed", "OUT.coil_on", "PMT.switch_count = 1"] },
+        { "set": { "CMD.set_off": true } },
+        { "run": 1 },
+        { "expect": ["STS.state = Stopping", "NOT OUT.coil_on"] },
+        { "run": 2 },
+        { "expect": ["STS.state = Available", "NOT FIN.feedback"] }
+      ]
+    },
+    {
+      "name": "Opens when it is forced off",
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 2 },
+        { "force": { "LOK.trip": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Stopping" },
+        { "run": 2 },
+        { "expect": "STS.state = Available" }
+      ]
+    },
+    {
+      "name": "Close is refused when closing is not allowed",
+      "steps": [
+        { "run": 2 },
+        { "force": { "LOK.can_on": false } },
+        { "set": { "CMD.set_on": true } },
+        { "run": 2 },
+        { "expect": "STS.state = Available" }
+      ]
+    },
+    {
+      "name": "Latched trip needs a reset",
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 2 },
+        { "force": { "FIN.tripped": true } },
+        { "run": 1 },
+        { "expect": ["STS.state = Shutdown", "INT.trip_latched"] },
+        { "expect": "ALM.Tripped.active" },
+        { "run": 2 },
+        { "expect": ["NOT FIN.feedback", "PMT.trip_count = 1"] },
+        { "release": "FIN.tripped" },
+        { "run": "0.5 s" },
+        { "expect": "ALM.Tripped.active" },
+        { "expect": "STS.state = Shutdown" },
+        { "set": { "CMD.reset": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Stopped" },
+        { "run": 1 },
+        { "expect": "STS.state = Available" },
+        { "expect": "NOT ALM.Tripped.active" }
+      ]
+    },
+    {
+      "name": "Unlatched trip clears by itself",
+      "steps": [
+        { "set": { "SET.trip_latches": false } },
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 2 },
+        { "force": { "FIN.tripped": true } },
+        { "run": 2 },
+        { "expect": "STS.state = Shutdown" },
+        { "release": "FIN.tripped" },
+        { "run": 3 },
+        { "expect": "STS.state = Available" },
+        { "expect": "NOT ALM.Tripped.active" }
+      ]
+    },
+    {
+      "name": "Bistable breaker is driven with pulses",
+      "steps": [
+        { "set": { "SET.bistable": true } },
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 1 },
+        { "expect": ["STS.state = Starting", "OUT.coil_on"] },
+        { "run": 1 },
+        { "expect": ["is_closed", "NOT OUT.coil_on"] },
+        { "run": "1 s" },
+        { "expect": "FIN.feedback" },
+        { "set": { "CMD.set_off": true } },
+        { "run": 1 },
+        { "expect": ["STS.state = Stopping", "OUT.coil_off"] },
+        { "run": 1 },
+        { "expect": ["STS.state = Stopped", "NOT OUT.coil_off"] }
+      ]
+    },
+    {
+      "name": "Not closing returns to open",
+      "steps": [
+        { "force": { "FIN.feedback": false } },
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 1 },
+        { "until": "STS.state = Stopped", "within": "1.5 s" },
+        { "expect": "NOT OUT.coil_on" },
+        { "expect": "ALM.NotClosing.raise_count = 1" }
+      ]
+    },
+    {
+      "name": "Close aborted by an open command",
+      "steps": [
+        { "force": { "FIN.feedback": false } },
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 1 },
+        { "set": { "CMD.set_off": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Stopped" }
+      ]
+    },
+    {
+      "name": "Closed and opened locally",
+      "steps": [
+        { "force": { "FIN.remote": false } },
+        { "run": 2 },
+        { "expect": ["STS.state = Available", "NOT STS.remote_ok"] },
+        { "set": { "CMD.set_on": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Available" },
+        { "force": { "FIN.feedback": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Running" },
+        { "force": { "FIN.feedback": false } },
+        { "run": 1 },
+        { "expect": "STS.state = Stopped" },
+        { "expect": ["ALM.InLocal.active", "ALM.OpenedUnexpectedly.raise_count = 0", "ALM.ClosedUnexpectedly.raise_count = 0"] }
+      ]
+    },
+    {
+      "name": "Taken over locally while opening",
+      "steps": [
+        { "force": { "FIN.feedback": true } },
+        { "run": 2 },
+        { "expect": "STS.state = Running" },
+        { "set": { "CMD.set_off": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Stopping" },
+        { "force": { "FIN.remote": false } },
+        { "run": 1 },
+        { "expect": "STS.state = Running" }
+      ]
+    },
+    {
+      "name": "Unknown position holds the coil",
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 2 },
+        { "bad": "FIN.feedback" },
+        { "run": 1 },
+        { "expect": ["STS.state = Unavailable", "OUT.coil_on"] },
+        { "good": "FIN.feedback" },
+        { "run": 1 },
+        { "expect": "STS.state = Running" }
+      ]
+    },
+    {
+      "name": "Unknown position while open",
+      "steps": [
+        { "run": 2 },
+        { "bad": "FIN.feedback" },
+        { "run": 1 },
+        { "expect": "STS.state = Unavailable" },
+        { "good": "FIN.feedback" },
+        { "run": 1 },
+        { "expect": "STS.state = Stopped" }
+      ]
+    },
+    {
+      "name": "Spring not charged",
+      "instances": [{ "name": "CM", "optionalTags": ["FIN.spring_charged"] }],
+      "steps": [
+        { "run": 2 },
+        { "expect": "STS.state = Available" },
+        { "force": { "FIN.spring_charged": false } },
+        { "run": 1 },
+        { "expect": "STS.state = Stopped" },
+        { "set": { "CMD.set_on": true } },
+        { "run": 1 },
+        { "expect": "STS.state = Stopped" }
+      ]
+    },
+    {
+      "name": "Opened unexpectedly while in remote",
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "run": 2 },
+        { "force": { "FIN.feedback": false } },
+        { "run": 1 },
+        { "expect": ["STS.state = Stopped", "ALM.OpenedUnexpectedly.raise_count = 1"] }
+      ]
+    }
+  ]
+}
