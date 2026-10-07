@@ -11,8 +11,10 @@ versions, the exchange file) is **ApolloIQ.Core**, included as the git submodule
 | `Builder.Logic` | Blueprints, blueprint validator, blueprint → runtime type, the PLC logic interpreter |
 | `Builder.Simulator` | Simulation sessions, scenario runner, TCP server for the SCADA TcpDriver |
 | `Builder.Persistence` | Project stored as one JSON file per object; the export to SCADA (`Export/ExchangeExporter.cs`) |
+| `Builder.Design` | The design format `apolloiq.design/1`: read a project as a design, turn a fragment into change items, apply a selection |
 | `Builder.Backend` | ASP.NET Core API on http://localhost:5180 |
 | `Builder.Frontend` | React + TypeScript + Vite on http://localhost:5174 |
+| `Builder.Mcp` | MCP server (Node, stdio) for AI agents: read designs, open and revise proposals ([README](Builder.Mcp/README.md)) |
 | `Builder.Tests` | xUnit v3 tests (Microsoft Testing Platform, see `global.json`); fixtures in `Builder.Tests/Fixtures` |
 | `Library` | The blueprint library (`Library/blueprints`) and scenarios (`Library/scenarios`), empty to start with |
 
@@ -66,3 +68,12 @@ SEL([SET.bistable], TRUE, STATE_TIME() < [PAR.pulse_time]) ^ [SET.invert_output]
 which SCADA imports. See [Documentation/Blueprints.md](Documentation/Blueprints.md#export-to-scada).
 
 API: `GET /api/projects/{id}/export/scada/check`, `POST /api/projects/{id}/export/scada`.
+
+## AI proposals
+
+An AI agent builds a project from a functional description through the MCP server in [Builder.Mcp](Builder.Mcp/README.md). It
+never changes the project: it opens a **proposal** (a design fragment in [apolloiq.design/1](Documentation/Design/Design%20format.md),
+example: [dirty-water.design.yaml](Documentation/Design/dirty-water.design.yaml)). The engineer reviews it in the **Proposals** tab:
+the description and the open questions, the changes per target with a YAML diff, live validation of the selection (dependencies are
+selected with it), accept all or part as one undoable step, reject, and comments per change or on the whole proposal. The agent reads
+the comments and makes a new version; changed items are marked. See [Design format § Proposals](Documentation/Design/Design%20format.md#proposals).
