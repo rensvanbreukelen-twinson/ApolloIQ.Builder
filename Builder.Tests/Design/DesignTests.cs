@@ -181,4 +181,11 @@ public class DesignTests
         Assert.True(JsonNode.DeepEquals(design.ToJson(), again.ToJson()));
         Assert.Equal(5, design.Blueprints![1].Alarms!["Overfull"].OnDelay);
     }
+
+    [Fact]
+    public void AnUnknownFieldIsAnError()
+    {
+        var error = Assert.Throws<DesignException>(() => Fragment("""{ "blueprints": [ { "name": "Pump", "tags": { "FIN.x": { "type": "Bool", "off near the bottom": null } } } ] }"""));
+        Assert.Contains("off near the bottom", error.Message);
+    }
 }

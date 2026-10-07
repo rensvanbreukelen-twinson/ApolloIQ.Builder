@@ -222,8 +222,7 @@
       "tags": {
         "FIN.start_level": {
           "type": "Bool",
-          "description": "Start float (large hysteresis); on at start level",
-          "off near the bottom": null,
+          "description": "Start float (large hysteresis): on at the start level, off near the bottom",
           "source": "LocalIO"
         },
         "FIN.overfull_level": {

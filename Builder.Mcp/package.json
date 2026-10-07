@@ -1,0 +1,20 @@
+{
+  "name": "apolloiq-builder-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server for the ApolloIQ Builder: read designs, open and revise proposals. Never changes a project directly.",
+  "type": "module",
+  "bin": {
+    "apolloiq-builder-mcp": "src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "smoke": "node scripts/smoke.js",
+    "yaml-to-json": "node scripts/yaml-to-json.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  }
+}

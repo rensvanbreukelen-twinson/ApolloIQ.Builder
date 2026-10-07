@@ -23,7 +23,7 @@ public static class ProposalEndpoints
 {
     public static void MapProposalApi(this WebApplication app)
     {
-        app.MapGet("/api/blueprints/design", (string? name, BlueprintStore store) => Guarded(() => Results.Ok(DesignReader.ReadBlueprints(store.All(), name))));
+        app.MapGet("/api/blueprints/design", (string? name, BlueprintStore store) => Guarded(() => Results.Json(DesignReader.ReadBlueprints(store.All(), name), DesignDocument.Json)));
 
         var project = app.MapGroup("/api/projects/{projectId:guid}");
 
@@ -31,7 +31,7 @@ public static class ProposalEndpoints
         {
             var session = workspace.Get(projectId);
             var blueprints = store.All();
-            return Results.Ok(session.Read(p => DesignReader.Read(p, session.Name, blueprints, path)));
+            return Results.Json(session.Read(p => DesignReader.Read(p, session.Name, blueprints, path)), DesignDocument.Json);
         }));
 
         project.MapPost("/design/validate", (Guid projectId, DesignRequest request, ProposalService proposals) =>

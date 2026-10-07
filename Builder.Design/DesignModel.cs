@@ -27,6 +27,7 @@ public sealed class DesignDocument
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         Converters = { new LenientStringConverter(), new JsonStringEnumConverter() }
     };
 
@@ -43,7 +44,10 @@ public sealed class DesignDocument
         }
         catch (JsonException ex)
         {
-            throw new DesignException($"The design does not match the format{(ex.Path is { } path ? $" at {path}" : "")}: {ex.Message}");
+            var message = ex.Message.Contains("could not be mapped", StringComparison.Ordinal) && ex.Path is { } at
+                ? $"Unknown field at {at.Replace("$.", "")}: check the spelling against the design format."
+                : ex.Message;
+            throw new DesignException($"The design does not match the format{(ex.Path is { } path && !message.Contains(path.Replace("$.", ""), StringComparison.Ordinal) ? $" at {path}" : "")}: {message}");
         }
     }
 

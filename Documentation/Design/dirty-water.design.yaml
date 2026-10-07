@@ -64,7 +64,7 @@ blueprints:
     roles:
       TransferPump: Pump
     tags:
-      FIN.start_level:    { type: Bool, description: Start float (large hysteresis); on at start level, off near the bottom, source: LocalIO }
+      FIN.start_level:    { type: Bool, description: "Start float (large hysteresis): on at the start level, off near the bottom", source: LocalIO }
       FIN.overfull_level: { type: Bool, description: Overfull float (small hysteresis); normally-closed contact, source: LocalIO }
       PAR.maximum_empty_time: { type: Real, unit: s, min: 10, max: 3600, initial: "600", description: Longest pump-down before the tank counts as not emptied in time }
       SET.start_on_overfull:  { type: Bool, initial: "TRUE", description: Also start the pump on the overfull float (backup for a broken start float) }
