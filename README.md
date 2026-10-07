@@ -7,7 +7,7 @@ Engineering tool for ApolloIQ: control modules, the master tag list and the expo
 | `Builder.Core` | Object model, tags, CM types. No dependencies. |
 | `Builder.Persistence` | Project stored as one JSON file per object |
 | `Builder.Backend` | ASP.NET Core API on http://localhost:5180 |
-| `Builder.Frontend` | React + TypeScript + Vite on http://localhost:5173 |
+| `Builder.Frontend` | React + TypeScript + Vite on http://localhost:5174 |
 | `Builder.Tests` | xUnit v3 tests (Microsoft Testing Platform, see `global.json`) |
 
 ## Run

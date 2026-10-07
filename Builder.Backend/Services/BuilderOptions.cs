@@ -20,5 +20,5 @@ public sealed class BuilderOptions
 
     public int SimulationFlushMs { get; set; } = 100;
 
-    public string[] AllowedOrigins { get; set; } = ["http://localhost:5173"];
+    public string[] AllowedOrigins { get; set; } = ["http://localhost:5174"];
 }
