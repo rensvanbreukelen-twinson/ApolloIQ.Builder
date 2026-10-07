@@ -22,6 +22,8 @@ public sealed class UnitInstance(Guid id, string name, Guid? parentId, Guid blue
 
     public CommandInputConfig? CommandInputs { get; internal set; }
 
+    public string Description { get; internal set; } = "";
+
     internal List<InterlockRule> Rules { get; } = [];
 
     public IReadOnlyList<InterlockRule> Interlocks => Rules;

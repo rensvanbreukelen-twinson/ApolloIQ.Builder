@@ -243,6 +243,36 @@ public sealed class Project
         Revision++;
     }
 
+    /// <summary>The description of a folder, CM, Equipment module or Unit.</summary>
+    public void SetDescription(Guid id, string? description)
+    {
+        var text = description?.Trim() ?? "";
+        switch (Get(id))
+        {
+            case Folder folder:
+                folder.Description = text;
+                break;
+            case ControlModule cm:
+                cm.Description = text;
+                break;
+            case UnitInstance unit:
+                unit.Description = text;
+                break;
+            default:
+                throw new ProjectException(ProjectErrors.NotFound, "Only folders, control modules, Equipment modules and Units have a description.");
+        }
+        Revision++;
+    }
+
+    /// <summary>The description of a folder, CM, Equipment module or Unit ("" for a tag).</summary>
+    public static string DescriptionOf(ProjectObject obj) => obj switch
+    {
+        Folder folder => folder.Description,
+        ControlModule cm => cm.Description,
+        UnitInstance unit => unit.Description,
+        _ => ""
+    };
+
     public void SetInitialValue(Guid tagId, System.Text.Json.Nodes.JsonNode? value)
     {
         Get<Tag>(tagId).InitialValue = value?.DeepClone();

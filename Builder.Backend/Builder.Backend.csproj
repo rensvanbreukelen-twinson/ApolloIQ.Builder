@@ -5,6 +5,7 @@
     <ItemGroup>
         <ProjectReference Include="..\Builder.Core\Builder.Core.csproj"/>
         <ProjectReference Include="..\Builder.Persistence\Builder.Persistence.csproj"/>
+        <ProjectReference Include="..\Builder.Design\Builder.Design.csproj"/>
         <ProjectReference Include="..\Builder.Simulator\Builder.Simulator.csproj"/>
     </ItemGroup>
 </Project>

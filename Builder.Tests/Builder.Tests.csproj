@@ -7,6 +7,7 @@
         <ProjectReference Include="..\Core\ApolloIQ.Core\ApolloIQ.Core.csproj" />
         <ProjectReference Include="..\Builder.Core\Builder.Core.csproj" />
         <ProjectReference Include="..\Builder.Persistence\Builder.Persistence.csproj" />
+        <ProjectReference Include="..\Builder.Design\Builder.Design.csproj" />
         <ProjectReference Include="..\Builder.Backend\Builder.Backend.csproj" />
         <ProjectReference Include="..\Builder.Logic\Builder.Logic.csproj" />
         <ProjectReference Include="..\Builder.Simulator\Builder.Simulator.csproj" />

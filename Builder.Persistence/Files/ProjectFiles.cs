@@ -20,6 +20,7 @@ public sealed class FolderFile
     [JsonPropertyOrder(1)] public Guid Id { get; set; }
     [JsonPropertyOrder(2)] public string Name { get; set; } = "";
     [JsonPropertyOrder(3)] public Guid? ParentId { get; set; }
+    [JsonPropertyOrder(4)] public string? Description { get; set; }
 }
 
 public sealed class ControlModuleFile
@@ -30,6 +31,7 @@ public sealed class ControlModuleFile
     [JsonPropertyOrder(3)] public Guid? ParentId { get; set; }
     [JsonPropertyOrder(4)] public Guid BlueprintId { get; set; }
     [JsonPropertyOrder(5)] public BlueprintVersion BlueprintVersion { get; set; } = BlueprintVersion.Initial;
+    [JsonPropertyOrder(6)] public string? Description { get; set; }
     [JsonPropertyOrder(7)] public List<TagEntry> Tags { get; set; } = [];
     [JsonPropertyOrder(8)] public List<InterlockEntry>? Interlocks { get; set; }
     [JsonPropertyOrder(9)] public SortedDictionary<string, int>? AlarmPriority { get; set; }
@@ -47,6 +49,7 @@ public sealed class UnitFile
     [JsonPropertyOrder(4)] public Guid BlueprintId { get; set; }
     [JsonPropertyOrder(5)] public BlueprintVersion BlueprintVersion { get; set; } = BlueprintVersion.Initial;
     [JsonPropertyOrder(5)][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool EquipmentModule { get; set; }
+    [JsonPropertyOrder(6)] public string? Description { get; set; }
     [JsonPropertyOrder(6)] public SortedDictionary<string, Guid> Members { get; set; } = new(StringComparer.Ordinal);
     [JsonPropertyOrder(7)] public List<TagEntry> Tags { get; set; } = [];
     [JsonPropertyOrder(8)] public CommandInputConfig? CommandInputs { get; set; }

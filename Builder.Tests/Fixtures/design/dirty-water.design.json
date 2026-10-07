@@ -1,0 +1,400 @@
+{
+  "schema": "apolloiq.design/1",
+  "project": "Dirty water demo",
+  "devices": [
+    {
+      "name": "MainPlc",
+      "role": "Plc",
+      "description": "Main automation PLC"
+    }
+  ],
+  "blueprints": [
+    {
+      "name": "Pump",
+      "kind": "CM",
+      "version": "0.1.0",
+      "description": "Fixed-speed pump on a contactor, with running feedback, overload and local/remote selector.",
+      "interfaces": [
+        "Base",
+        "Switchable",
+        "Resettable",
+        "Interlocks"
+      ],
+      "tags": {
+        "FIN.running": {
+          "type": "Bool",
+          "description": "Running feedback (contactor auxiliary contact)",
+          "source": "LocalIO"
+        },
+        "FIN.overload": {
+          "type": "Bool",
+          "description": "Thermal overload tripped",
+          "source": "LocalIO"
+        },
+        "FIN.remote": {
+          "type": "Bool",
+          "description": "Local/remote selector in remote",
+          "source": "LocalIO"
+        },
+        "OUT.run": {
+          "type": "Bool",
+          "description": "Contactor coil"
+        },
+        "PAR.maximum_start_time": {
+          "type": "Real",
+          "unit": "s",
+          "min": 1,
+          "max": 60,
+          "initial": "5",
+          "description": "Run command to running feedback"
+        },
+        "PAR.maximum_stop_time": {
+          "type": "Real",
+          "unit": "s",
+          "min": 1,
+          "max": 60,
+          "initial": "5",
+          "description": "Stop command to feedback gone"
+        }
+      },
+      "states": {
+        "NotReady": {
+          "category": 0,
+          "text": "Not ready",
+          "initial": true,
+          "run": {
+            "OUT.run": "FALSE"
+          }
+        },
+        "SwitchingOff": {
+          "category": 100,
+          "text": "Switching off",
+          "run": {
+            "OUT.run": "FALSE"
+          }
+        },
+        "Ready": {
+          "category": 200,
+          "run": {
+            "OUT.run": "FALSE"
+          }
+        },
+        "SwitchingOn": {
+          "category": 300,
+          "text": "Switching on",
+          "run": {
+            "OUT.run": "TRUE"
+          },
+          "timeout": {
+            "time": "[PAR.maximum_start_time]",
+            "goTo": "Failed",
+            "alarm": "FailedToStart",
+            "priority": 20,
+            "message": "{instance_name}: pump does not start"
+          }
+        },
+        "Pumping": {
+          "category": 400,
+          "run": {
+            "OUT.run": "TRUE"
+          }
+        },
+        "Failed": {
+          "category": 500,
+          "text": "Pump failure",
+          "run": {
+            "OUT.run": "FALSE"
+          }
+        }
+      },
+      "transitions": {
+        "ready": {
+          "from": [
+            "NotReady"
+          ],
+          "to": "Ready",
+          "guard": "![INT.overload] && [STS.remote_ok]"
+        },
+        "not_ready": {
+          "from": [
+            "Ready"
+          ],
+          "to": "NotReady",
+          "guard": "[INT.overload] || ![STS.remote_ok]"
+        },
+        "start": {
+          "from": [
+            "Ready"
+          ],
+          "to": "SwitchingOn",
+          "guard": "[CMD.set_on] && [LOK.can_on]"
+        },
+        "started": {
+          "from": [
+            "SwitchingOn"
+          ],
+          "to": "Pumping",
+          "guard": "[INT.running]"
+        },
+        "stop": {
+          "from": [
+            "SwitchingOn",
+            "Pumping"
+          ],
+          "to": "SwitchingOff",
+          "guard": "([CMD.set_off] && [LOK.can_off]) || [LOK.trip]"
+        },
+        "stopped": {
+          "from": [
+            "SwitchingOff"
+          ],
+          "to": "Ready",
+          "guard": "![INT.running]"
+        },
+        "stopped_unexpectedly": {
+          "from": [
+            "Pumping"
+          ],
+          "to": "Failed",
+          "guard": "![INT.running] || [INT.overload]",
+          "priority": 1
+        },
+        "reset": {
+          "from": [
+            "Failed"
+          ],
+          "to": "NotReady",
+          "guard": "[CMD.reset]"
+        }
+      },
+      "always": {
+        "STS.remote_ok": "[STS.enabled] && [INT.remote]"
+      },
+      "alarms": {
+        "Overload": {
+          "priority": 25,
+          "message": "{instance_name}: overload",
+          "trigger": "State",
+          "condition": "[INT.overload]",
+          "plcReactive": true
+        },
+        "StoppedUnexpectedly": {
+          "priority": 20,
+          "message": "{instance_name}: stopped unexpectedly",
+          "trigger": "State",
+          "plcReactive": true,
+          "condition": "[STS.state] == Pumping && ![INT.running]",
+          "onTransition": "stopped_unexpectedly"
+        },
+        "FailedToStop": {
+          "priority": 25,
+          "message": "{instance_name}: pump does not stop",
+          "trigger": "Timeout",
+          "running": "[STS.state] == SwitchingOff",
+          "condition": "![INT.running]",
+          "timeout": "[PAR.maximum_stop_time]"
+        },
+        "InLocal": {
+          "priority": 5,
+          "message": "{instance_name}: in local control",
+          "trigger": "State",
+          "condition": "![INT.remote]"
+        }
+      },
+      "plant": {
+        "FIN.running": "[OUT.run]",
+        "FIN.overload": "FALSE",
+        "FIN.remote": "TRUE"
+      }
+    },
+    {
+      "name": "DirtyWaterTank",
+      "kind": "EM",
+      "version": "0.1.0",
+      "description": "Collecting tank for waste water; emptied automatically by its transfer pump.",
+      "interfaces": [
+        "Base",
+        "Resettable"
+      ],
+      "roles": {
+        "TransferPump": "Pump"
+      },
+      "tags": {
+        "FIN.start_level": {
+          "type": "Bool",
+          "description": "Start float (large hysteresis); on at start level",
+          "off near the bottom": null,
+          "source": "LocalIO"
+        },
+        "FIN.overfull_level": {
+          "type": "Bool",
+          "description": "Overfull float (small hysteresis); normally-closed contact",
+          "source": "LocalIO"
+        },
+        "PAR.maximum_empty_time": {
+          "type": "Real",
+          "unit": "s",
+          "min": 10,
+          "max": 3600,
+          "initial": "600",
+          "description": "Longest pump-down before the tank counts as not emptied in time"
+        },
+        "SET.start_on_overfull": {
+          "type": "Bool",
+          "initial": "TRUE",
+          "description": "Also start the pump on the overfull float (backup for a broken start float)"
+        }
+      },
+      "states": {
+        "Waiting": {
+          "category": 200,
+          "text": "Waiting for level",
+          "initial": true
+        },
+        "PumpingOut": {
+          "category": 400,
+          "text": "Pumping out",
+          "entry": {
+            "TransferPump.CMD.set_on": "TRUE"
+          }
+        },
+        "Finishing": {
+          "category": 100,
+          "text": "Stopping the pump",
+          "entry": {
+            "TransferPump.CMD.set_off": "TRUE"
+          }
+        },
+        "PumpFault": {
+          "category": 500,
+          "text": "Level control failed",
+          "entry": {
+            "TransferPump.CMD.set_off": "TRUE"
+          }
+        }
+      },
+      "transitions": {
+        "demand": {
+          "from": [
+            "Waiting"
+          ],
+          "to": "PumpingOut",
+          "guard": "[STS.auto] && ([INT.start_level] || ([SET.start_on_overfull] && [INT.overfull_level]))"
+        },
+        "emptied": {
+          "from": [
+            "PumpingOut"
+          ],
+          "to": "Finishing",
+          "guard": "![INT.start_level] && ![INT.overfull_level]"
+        },
+        "finished": {
+          "from": [
+            "Finishing"
+          ],
+          "to": "Waiting",
+          "guard": "[TransferPump.STS.state] != Pumping"
+        },
+        "manual": {
+          "from": [
+            "PumpingOut",
+            "Finishing"
+          ],
+          "to": "Waiting",
+          "guard": "![STS.auto]"
+        },
+        "pump_failed": {
+          "from": [
+            "PumpingOut"
+          ],
+          "to": "PumpFault",
+          "guard": "[TransferPump.STS.state] == Failed",
+          "priority": 1
+        },
+        "reset": {
+          "from": [
+            "PumpFault"
+          ],
+          "to": "Waiting",
+          "guard": "[CMD.reset]"
+        }
+      },
+      "always": {
+        "STS.remote_ok": "[STS.enabled]"
+      },
+      "alarms": {
+        "Overfull": {
+          "priority": 25,
+          "message": "{instance_name}: tank overfull",
+          "trigger": "State",
+          "condition": "[INT.overfull_level]",
+          "plcReactive": true,
+          "onDelay": 5
+        },
+        "NotEmptiedInTime": {
+          "priority": 20,
+          "message": "{instance_name}: tank not emptied in time",
+          "trigger": "Timeout",
+          "running": "[STS.state] == PumpingOut",
+          "condition": "![INT.start_level]",
+          "timeout": "[PAR.maximum_empty_time]"
+        },
+        "FloatMismatch": {
+          "priority": 10,
+          "message": "{instance_name}: overfull float up while the start float is down; start float probably stuck",
+          "trigger": "State",
+          "condition": "[INT.overfull_level] && ![INT.start_level]",
+          "onDelay": 30
+        }
+      },
+      "plant": {
+        "FIN.start_level": "FALSE",
+        "FIN.overfull_level": "TRUE"
+      }
+    }
+  ],
+  "objects": [
+    {
+      "folder": "Bilge",
+      "children": [
+        {
+          "em": "DirtyWaterTank",
+          "blueprint": "DirtyWaterTank",
+          "description": "Dirty water tank",
+          "device": "MainPlc",
+          "values": {
+            "SET.invert_overfull_level": "TRUE"
+          },
+          "members": {
+            "TransferPump": {
+              "cm": "TransferPump",
+              "description": "Dirty water transfer pump"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "questions": [
+    {
+      "about": "Bilge.DirtyWaterTank",
+      "question": "Should the pump also run on the overfull float in manual?",
+      "assumed": "No; in manual the operator decides. The overfull alarm is raised in both modes."
+    },
+    {
+      "about": "Bilge.DirtyWaterTank.Overfull",
+      "question": "Should the overfull tank also stop the inflow (for example a permit to the sanitary system)?",
+      "assumed": "No interlock to other systems yet."
+    },
+    {
+      "about": "Bilge.DirtyWaterTank.TransferPump",
+      "question": "Is the pump dry-run proof? The tank has no low-level float; the pump stops when the start float drops.",
+      "assumed": "Yes; no dry-run protection."
+    },
+    {
+      "about": "Bilge.DirtyWaterTank",
+      "question": "Is the overfull float wired normally-closed?",
+      "assumed": "Yes, so a broken wire raises the overfull alarm (fail-safe)."
+    }
+  ]
+}

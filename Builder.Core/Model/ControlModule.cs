@@ -33,6 +33,9 @@ public sealed class ControlModule(
 
     public Guid? ExecutionDeviceId { get; internal set; }
 
+    /// <summary>What this instance is, in the engineer's words ("Dirty water transfer pump").</summary>
+    public string Description { get; internal set; } = "";
+
     /// <summary>Alarm priorities that differ from the blueprint, per alarm name.</summary>
     public IReadOnlyDictionary<string, int> AlarmPriorities => Priorities;
 

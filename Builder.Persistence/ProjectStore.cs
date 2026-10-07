@@ -52,7 +52,8 @@ public static class ProjectStore
         {
             Id = f.Id,
             Name = f.Name,
-            ParentId = f.ParentId
+            ParentId = f.ParentId,
+            Description = NullIfEmpty(f.Description)
         });
         var modules = project.Objects.OfType<ControlModule>().ToDictionary(cm => FileName(cm.Id), cm => (object)ToFile(project, cm));
         var topologyPath = Path.Combine(directory, TopologyFileName);
@@ -71,6 +72,7 @@ public static class ProjectStore
             BlueprintId = u.BlueprintId,
             BlueprintVersion = u.BlueprintVersion,
             EquipmentModule = u.IsEquipmentModule,
+            Description = NullIfEmpty(u.Description),
             Members = new SortedDictionary<string, Guid>(u.RoleMembers.ToDictionary(m => m.Key, m => m.Value), StringComparer.Ordinal),
             Tags = TagEntries(project, u.Id),
             CommandInputs = u.CommandInputs,
@@ -138,7 +140,12 @@ public static class ProjectStore
             foreach (var (file, data) in ready)
             {
                 pending.Remove((file, data));
-                Guard(file, errors, () => project.AddFolder(data.Name, data.ParentId, data.Id));
+                Guard(file, errors, () =>
+                {
+                    var folder = project.AddFolder(data.Name, data.ParentId, data.Id);
+                    if (!string.IsNullOrEmpty(data.Description))
+                        project.SetDescription(folder.Id, data.Description);
+                });
             }
         }
 
@@ -147,6 +154,8 @@ public static class ProjectStore
             Guard(file, errors, () =>
             {
                 var unit = project.AddUnit(data.Name, data.ParentId, data.BlueprintId, data.BlueprintVersion, data.Id, data.EquipmentModule);
+                if (!string.IsNullOrEmpty(data.Description))
+                    project.SetDescription(unit.Id, data.Description);
                 foreach (var tag in data.Tags)
                     AddTag(project, unit.Id, tag, file);
                 if (data.CommandInputs is { } inputs)
@@ -159,6 +168,8 @@ public static class ProjectStore
             Guard(file, errors, () =>
             {
                 var cm = project.AddControlModule(data.Name, data.ParentId, data.BlueprintId, data.BlueprintVersion, data.Id);
+                if (!string.IsNullOrEmpty(data.Description))
+                    project.SetDescription(cm.Id, data.Description);
                 if (data.CommandInputs is { } inputs)
                     project.SetCommandInputs(cm.Id, inputs);
                 foreach (var (alarm, priority) in data.AlarmPriority ?? [])
@@ -205,6 +216,7 @@ public static class ProjectStore
         ParentId = cm.ParentId,
         BlueprintId = cm.BlueprintId,
         BlueprintVersion = cm.BlueprintVersion,
+        Description = NullIfEmpty(cm.Description),
         Interlocks = InterlockEntry.From(cm.Interlocks),
         AlarmPriority = cm.AlarmPriorities.Count == 0
             ? null
@@ -284,6 +296,57 @@ public static class ProjectStore
     }
 
     private static string FileName(Guid id) => $"{id:D}.json";
+
+    private static string? NullIfEmpty(string text) => string.IsNullOrEmpty(text) ? null : text;
+
+    /// <summary>A deep copy of a project (written to a temporary folder and loaded again): same ids, same symbol keys.</summary>
+    public static Project Copy(Project project)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"apolloiq-copy-{Guid.NewGuid():N}");
+        try
+        {
+            Save(directory, Guid.Empty, "copy", project);
+            return Load(directory).Project;
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>The files of a saved project (relative path → content), without other folders such as proposals.</summary>
+    public static Dictionary<string, string> Snapshot(string directory)
+    {
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in new[] { ProjectFileName, TopologyFileName, LayoutFileName })
+            if (File.Exists(Path.Combine(directory, name)))
+                files[name] = File.ReadAllText(Path.Combine(directory, name));
+        foreach (var folder in new[] { FoldersDirectory, ControlModulesDirectory, UnitsDirectory })
+            if (Directory.Exists(Path.Combine(directory, folder)))
+                foreach (var path in Directory.EnumerateFiles(Path.Combine(directory, folder), "*.json"))
+                    files[$"{folder}/{Path.GetFileName(path)}"] = File.ReadAllText(path);
+        return files;
+    }
+
+    /// <summary>Writes a <see cref="Snapshot"/> back: the project files become exactly the snapshot.</summary>
+    public static void Restore(string directory, IReadOnlyDictionary<string, string> files)
+    {
+        foreach (var name in new[] { TopologyFileName, LayoutFileName })
+            if (!files.ContainsKey(name) && File.Exists(Path.Combine(directory, name)))
+                File.Delete(Path.Combine(directory, name));
+        foreach (var folder in new[] { FoldersDirectory, ControlModulesDirectory, UnitsDirectory })
+            if (Directory.Exists(Path.Combine(directory, folder)))
+                foreach (var path in Directory.EnumerateFiles(Path.Combine(directory, folder), "*.json"))
+                    if (!files.ContainsKey($"{folder}/{Path.GetFileName(path)}"))
+                        File.Delete(path);
+        foreach (var (name, content) in files)
+        {
+            var path = Path.Combine(directory, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, content, new UTF8Encoding(false));
+        }
+    }
 
     private static void SyncDirectory(string directory, Dictionary<string, object> files)
     {

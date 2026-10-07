@@ -62,6 +62,7 @@ public static partial class BlueprintValidator
             if (!symbols.TryAdd(tag.Key, TypeOf(tag.DataType)))
                 issues.Add(BlueprintIssue.Error(where, "This tag exists twice, or clashes with an interface tag."));
         }
+        AddGeneratedInputSymbols(blueprint.Tags, "", symbols);
         if (blueprint.Tags.Where(t => t.Id != Guid.Empty).GroupBy(t => t.Id).Any(g => g.Count() > 1))
             issues.Add(BlueprintIssue.Error("Tags", "Two tags share the same id."));
         if (blueprint.Tags.Count(t => t.Primary) > 1)
@@ -215,12 +216,27 @@ public static partial class BlueprintValidator
         return own.Concat(timeouts).Concat(trips).Concat(unit);
     }
 
+    /// <summary>
+    /// The tags the runtime generates for a Bool input (<c>CmType.ExpandTags</c>): the conditioned copy <c>INT.&lt;name&gt;</c> and, for
+    /// local I/O, <c>SET.invert_&lt;name&gt;</c>. A blueprint may declare the INT copy itself; it does not have to.
+    /// </summary>
+    private static void AddGeneratedInputSymbols(IEnumerable<BlueprintTag> tags, string prefix, Dictionary<string, ValueType> symbols)
+    {
+        foreach (var input in tags.Where(t => t.Group == "FIN" && t.DataType == "Bool").ToList())
+        {
+            symbols.TryAdd($"{prefix}INT.{input.Name}", ValueType.Bool);
+            if (input.Source != InputSource.External)
+                symbols.TryAdd($"{prefix}SET.invert_{input.Name}", ValueType.Bool);
+        }
+    }
+
     private static void AddMemberSymbols(string prefix, Blueprint member, Func<Guid, Blueprint?>? lookup, Dictionary<string, ValueType> symbols, int depth)
     {
         foreach (var tag in BlueprintRules.InterfaceTags(member))
             symbols[$"{prefix}.{tag.Key}"] = TypeOf(tag.DataType.ToString());
         foreach (var tag in member.Tags)
             symbols[$"{prefix}.{tag.Key}"] = TypeOf(tag.DataType);
+        AddGeneratedInputSymbols(member.Tags, $"{prefix}.", symbols);
         foreach (var alarm in PlcAlarmNames(member))
             symbols[$"{prefix}.ALM.{alarm}.active"] = ValueType.Bool;
         if (depth < 3 && member.Kind != BlueprintKind.CM)
