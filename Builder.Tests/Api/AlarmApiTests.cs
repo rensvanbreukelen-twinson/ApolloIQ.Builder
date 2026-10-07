@@ -19,7 +19,7 @@ public sealed class AlarmApiTests : IAsyncLifetime
     {
         _server = await ApiServer.StartAsync();
         _project = (await _server.Post<ProjectDto>("/api/projects", new CreateProjectRequest("Alarms"))).Id;
-        _gen = await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest("GenSet", "GEN1", null, []));
+        _gen = await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest(Fixtures.Light, "GEN1", null));
     }
 
     public async ValueTask DisposeAsync()
@@ -34,37 +34,38 @@ public sealed class AlarmApiTests : IAsyncLifetime
     public async Task AlarmsListTheDefinitionsOfTheInstance()
     {
         var alarms = await _server.Get<List<AlarmDto>>(Url($"/control-modules/{_gen.Id}/alarms"));
-        Assert.Equal(19, alarms.Count);
-        var shutdown = alarms.Single(a => a.Name == "EngineShutdown");
-        Assert.Equal((30, "Alarm", "PLC", "GEN1.ALM.EngineShutdown.active"), (shutdown.Severity, shutdown.Band, shutdown.RunsOn, shutdown.ActiveTag));
-        Assert.Equal("Engine shutdown", shutdown.Message["en"]);
-        Assert.Null(alarms.Single(a => a.Name == "ServiceDue").ActiveTag);
+        Assert.Equal(["LampFailure", "Overcurrent", "SlowSwitch", "CurrentWhileOff", "DoesNotSwitchOn"], alarms.Select(a => a.Name));
+        var timeout = alarms.Single(a => a.Name == "DoesNotSwitchOn");
+        Assert.Equal((20, "Alarm", true, "GEN1.ALM.DoesNotSwitchOn.active", "StateTimeout"), (timeout.Priority, timeout.Level, timeout.PlcReactive, timeout.ActiveTag, timeout.Source));
+        Assert.Equal("GEN1: Turning on took too long", timeout.Message);
+        var failure = alarms.Single(a => a.Name == "LampFailure");
+        Assert.Equal((false, (string?)null, "Warning"), (failure.PlcReactive, failure.ActiveTag, failure.Level));
     }
 
     [Fact]
-    public async Task SeverityCanBeChangedPerInstanceAndReset()
+    public async Task PriorityCanBeChangedPerInstanceAndReset()
     {
-        var response = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/NotInAuto"), new SeverityRequest(12), Ct);
+        var response = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/LampFailure"), new PriorityRequest(22), Ct);
         response.EnsureSuccessStatusCode();
-        var alarm = (await response.Content.ReadFromJsonAsync<List<AlarmDto>>(ApiServer.Json, Ct))!.Single(a => a.Name == "NotInAuto");
-        Assert.Equal((12, 5, "Warning"), (alarm.Severity, alarm.DefaultSeverity, alarm.Band));
+        var alarm = (await response.Content.ReadFromJsonAsync<List<AlarmDto>>(ApiServer.Json, Ct))!.Single(a => a.Name == "LampFailure");
+        Assert.Equal((22, 10, "Alarm"), (alarm.Priority, alarm.DefaultPriority, alarm.Level));
 
-        var stored = ProjectStore.Load(Directory.GetDirectories(_server.ProjectsRoot).Single()).Project;
-        Assert.Equal(12, stored.Get<ControlModule>(_gen.Id).AlarmSeverities["NotInAuto"]);
+        var stored = ProjectStore.Load(Directory.GetDirectories(_server.ProjectsRoot).Single(d => File.Exists(Path.Combine(d, ProjectStore.ProjectFileName)))).Project;
+        Assert.Equal(22, stored.Get<ControlModule>(_gen.Id).AlarmPriorities["LampFailure"]);
 
-        var reset = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/NotInAuto"), new SeverityRequest(null), Ct);
-        Assert.Equal(5, (await reset.Content.ReadFromJsonAsync<List<AlarmDto>>(ApiServer.Json, Ct))!.Single(a => a.Name == "NotInAuto").Severity);
+        var reset = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/LampFailure"), new PriorityRequest(null), Ct);
+        Assert.Equal(10, (await reset.Content.ReadFromJsonAsync<List<AlarmDto>>(ApiServer.Json, Ct))!.Single(a => a.Name == "LampFailure").Priority);
 
-        var bad = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/NotInAuto"), new SeverityRequest(31), Ct);
+        var bad = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/LampFailure"), new PriorityRequest(31), Ct);
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-        var missing = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/Nope"), new SeverityRequest(1), Ct);
+        var missing = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/alarms/Nope"), new PriorityRequest(1), Ct);
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
     [Fact]
     public async Task WiresAreSetByPathAndListed()
     {
-        await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest("PushButton", "BTN", null, []));
+        await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest(Fixtures.PushButton, "BTN", null));
         var response = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/wires"),
             new SetWiresRequest([new WireRequest("BTN.INT.pressed", "toggle", null)]), Ct);
         response.EnsureSuccessStatusCode();
@@ -75,33 +76,5 @@ public sealed class AlarmApiTests : IAsyncLifetime
         var bad = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{_gen.Id}/wires"),
             new SetWiresRequest([new WireRequest("BTN.INT.nothing", "On", null)]), Ct);
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-    }
-
-    [Fact]
-    public async Task PicRowsCreateTheirCommandTags()
-    {
-        var pic = await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest("PriorityInputControl", "LIFT", null, []));
-        var request = new PicRequest("Up", "Down", [new PicRowRequest("WH_buttons", "Hardwired", "Hold", 1, 1, null), new PicRowRequest("ECR_hmi", "Hmi", "Hold", 3, null, "Ignore")]);
-        var response = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{pic.Id}/pic"), request, Ct);
-        response.EnsureSuccessStatusCode();
-        var dto = (await response.Content.ReadFromJsonAsync<PicDto>(ApiServer.Json, Ct))!;
-        Assert.Equal("LIFT.CMD.ECR_hmi_on", dto.Rows[1].OnTag);
-        Assert.Null(dto.Rows[1].OffTag);
-
-        var tags = await _server.Get<List<TagDto>>($"/api/projects/{_project}/tags?scope={pic.Id}&group=CMD");
-        Assert.Equal(["LIFT.CMD.auto_active", "LIFT.CMD.ECR_hmi_on", "LIFT.CMD.WH_buttons_off", "LIFT.CMD.WH_buttons_on"], tags.Select(t => t.Path));
-
-        (await _server.Client.PutAsJsonAsync(Url($"/control-modules/{pic.Id}/pic"), new PicRequest("Up", "Down", [request.Rows[0]]), Ct)).EnsureSuccessStatusCode();
-        tags = await _server.Get<List<TagDto>>($"/api/projects/{_project}/tags?scope={pic.Id}&group=CMD");
-        Assert.Equal(3, tags.Count);
-
-        var stored = ProjectStore.Load(Directory.GetDirectories(_server.ProjectsRoot).Single()).Project;
-        Assert.Equal("WH_buttons", Assert.Single(stored.Get<ControlModule>(pic.Id).Pic!.Rows).Name);
-
-        var duplicate = await _server.Client.PutAsJsonAsync(Url($"/control-modules/{pic.Id}/pic"),
-            new PicRequest("Up", "Down", [request.Rows[0], request.Rows[0]]), Ct);
-        Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
-        var notPic = await _server.Client.GetAsync(Url($"/control-modules/{_gen.Id}/pic"), Ct);
-        Assert.Equal(HttpStatusCode.BadRequest, notPic.StatusCode);
     }
 }

@@ -2,4 +2,7 @@
     <PropertyGroup>
         <RootNamespace>Builder.Core</RootNamespace>
     </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Core\ApolloIQ.Core\ApolloIQ.Core.csproj"/>
+    </ItemGroup>
 </Project>

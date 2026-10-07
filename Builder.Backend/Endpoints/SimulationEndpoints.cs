@@ -103,6 +103,8 @@ public static class SimulationEndpoints
 
         sim.MapGet("/diagnostics", (Guid projectId, SimulationHost host) => host.Get(projectId).Diagnostics);
 
+        sim.MapGet("/alarms", (Guid projectId, SimulationHost host) => host.Get(projectId).Alarms());
+
         sim.MapPost("/write", (Guid projectId, TagValueRequest request, SimulationHost host) =>
             host.Get(projectId).Write(request.Tag, request.Value));
 

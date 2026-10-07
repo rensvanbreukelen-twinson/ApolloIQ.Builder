@@ -1,11 +1,10 @@
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Persistence;
-using Builder.Persistence.Export;
 
 namespace Builder.Backend.Services;
 
-public sealed class ProjectSession(Guid id, string name, string directory, Project project, HmiExportProfile? hmiExport = null)
+public sealed class ProjectSession(Guid id, string name, string directory, Project project)
 {
     private readonly Lock _lock = new();
 
@@ -18,19 +17,6 @@ public sealed class ProjectSession(Guid id, string name, string directory, Proje
     public Project Project { get; } = project;
 
     public TagRegistry Tags { get; } = new(project);
-
-    public HmiExportProfile HmiExport { get; private set; } = hmiExport ?? HmiExportProfile.Default;
-
-    public HmiExportProfile SetHmiExport(HmiExportProfile profile)
-    {
-        HmiTagsExporter.Validate(profile);
-        lock (_lock)
-        {
-            HmiExport = profile;
-            ProjectStore.Save(Directory, Id, Name, Project, HmiExport);
-            return HmiExport;
-        }
-    }
 
     public T Read<T>(Func<Project, T> read)
     {
@@ -46,7 +32,7 @@ public sealed class ProjectSession(Guid id, string name, string directory, Proje
         lock (_lock)
         {
             result = change(Project);
-            ProjectStore.Save(Directory, Id, Name, Project, HmiExport);
+            ProjectStore.Save(Directory, Id, Name, Project);
         }
         Changed?.Invoke(this);
         return result;

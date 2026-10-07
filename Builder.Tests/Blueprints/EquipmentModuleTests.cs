@@ -1,8 +1,8 @@
-using System.Text.Json;
 using Builder.Backend.Services;
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
+using ApolloIQ.Core.Blueprints;
 using Builder.Logic.Blueprints;
 using Builder.Persistence;
 using Builder.Simulator;
@@ -14,7 +14,7 @@ public sealed class EquipmentModuleTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), $"em-{Guid.NewGuid():N}");
     private readonly BlueprintStore _store;
-    private readonly Blueprint _light = Load("Light");
+    private readonly Blueprint _light = Fixtures.Load("Light");
     private readonly Blueprint _source;
     private readonly Blueprint _plant;
 
@@ -22,10 +22,10 @@ public sealed class EquipmentModuleTests : IDisposable
     {
         _store = new BlueprintStore(Path.Combine(_root, "blueprints"));
         _source = new Blueprint
-        {
+        { Id = Guid.NewGuid(),
             Kind = BlueprintKind.EM, Name = "LightSource", Interfaces = ["Base", "Switchable"],
-            Roles = [new BlueprintRole { Name = "LAMP", Blueprint = "Light" }],
-            Always = [new BlueprintAction { Tag = "STS.remote_ok", Value = "STS.enabled" }],
+            Roles = [new BlueprintRole { Name = "LAMP", BlueprintId = Fixtures.Light }],
+            Always = [new BlueprintAction { Tag = "STS.remote_ok", Value = "[STS.enabled]" }],
             States =
             [
                 new BlueprintState { Name = "Idle", Category = 200, Initial = true },
@@ -34,23 +34,23 @@ public sealed class EquipmentModuleTests : IDisposable
             ],
             Transitions =
             [
-                new BlueprintTransition { Name = "start", From = ["Idle"], To = "Lighting", Guard = "CMD.set_on" },
-                new BlueprintTransition { Name = "lit", From = ["Lighting"], To = "Lit", Guard = "LAMP.STS.state = On" }
+                new BlueprintTransition { Name = "start", From = ["Idle"], To = "Lighting", Guard = "[CMD.set_on]" },
+                new BlueprintTransition { Name = "lit", From = ["Lighting"], To = "Lit", Guard = "[LAMP.STS.state] == On" }
             ]
         };
         _plant = new Blueprint
-        {
+        { Id = Guid.NewGuid(),
             Kind = BlueprintKind.Unit, Name = "Plant", Interfaces = ["Base", "Switchable"],
-            Roles = [new BlueprintRole { Name = "SRC", Blueprint = "LightSource" }],
+            Roles = [new BlueprintRole { Name = "SRC", BlueprintId = _source.Id }],
             States =
             [
                 new BlueprintState { Name = "Idle", Category = 200, Initial = true },
-                new BlueprintState { Name = "Running", Category = 400, Entry = [new BlueprintAction { Tag = "SRC.CMD.set_on", Value = "TRUE" }] }
+                new BlueprintState { Name = "Producing", Category = 400, Entry = [new BlueprintAction { Tag = "SRC.CMD.set_on", Value = "TRUE" }] }
             ],
-            Transitions = [new BlueprintTransition { Name = "go", From = ["Idle"], To = "Running", Guard = "CMD.set_on" }]
+            Transitions = [new BlueprintTransition { Name = "go", From = ["Idle"], To = "Producing", Guard = "[CMD.set_on]" }]
         };
         foreach (var blueprint in new[] { _light, _source, _plant })
-            _store.Save(null, blueprint);
+            _store.Save(blueprint);
     }
 
     public void Dispose()
@@ -59,18 +59,15 @@ public sealed class EquipmentModuleTests : IDisposable
             Directory.Delete(_root, recursive: true);
     }
 
-    private static Blueprint Load(string name) => JsonSerializer.Deserialize<Blueprint>(
-        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "blueprints", $"{name}.blueprint.json")), Blueprint.Json)!;
-
     private CmLibrary Library()
     {
         var library = new CmLibrary();
         foreach (var blueprint in new[] { _light, _source, _plant })
-            library.Add(BlueprintTypes.ToCmType(blueprint));
+            library.Replace(BlueprintTypes.ToCmType(blueprint.Clone()));
         return library;
     }
 
-    private Blueprint? Find(string name) => _store.Find(name);
+    private Blueprint? Find(Guid id) => _store.Find(id);
 
     private (Project Project, CmLibrary Library, UnitInstance Unit, UnitInstance Em, ControlModule Lamp) Build()
     {
@@ -78,7 +75,7 @@ public sealed class EquipmentModuleTests : IDisposable
         var project = new Project();
         var unit = UnitSupport.Create(project, _plant, "U", null, library, _store);
         var em = UnitSupport.Create(project, _source, "SRC1", unit.Id, library, _store);
-        var lamp = InstanceFactory.Create(project, library, "Light", "L1", null);
+        var lamp = InstanceFactory.Create(project, library, Fixtures.Light, "L1", null);
         UnitSupport.Move(project, library, _store, lamp.Id, em.Id);
         return (project, library, unit, em, lamp);
     }
@@ -88,7 +85,7 @@ public sealed class EquipmentModuleTests : IDisposable
     {
         Assert.DoesNotContain(BlueprintValidator.Validate(_source, Find), i => i.Severity == "Error");
         Assert.DoesNotContain(BlueprintValidator.Validate(_plant, Find), i => i.Severity == "Error");
-        var nested = new Blueprint { Kind = BlueprintKind.EM, Name = "Nested", Roles = [new BlueprintRole { Name = "INNER", Blueprint = "LightSource" }],
+        var nested = new Blueprint { Id = Guid.NewGuid(), Kind = BlueprintKind.EM, Name = "Nested", Roles = [new BlueprintRole { Name = "INNER", BlueprintId = _source.Id }],
             States = [new BlueprintState { Name = "Idle", Category = 200, Initial = true }] };
         Assert.Contains(BlueprintValidator.Validate(nested, Find), i => i.Severity == "Error" && i.Message.Contains("G-151"));
         Assert.Contains("CMD.set_auto", BlueprintTypes.ToCmType(_source).ExpandTags().Select(t => $"{t.Group.Code()}.{t.Name}"));
@@ -142,7 +139,7 @@ public sealed class EquipmentModuleTests : IDisposable
 
         session.Write("U.CMD.set_on", true);
         session.Step(20);
-        Assert.Equal("Running", session.ControlModules().Single(c => c.Path == "U").StateName);
+        Assert.Equal("Producing", session.ControlModules().Single(c => c.Path == "U").StateName);
         Assert.Equal("On", session.ControlModules().Single(c => c.Path == "U.SRC1.L1").StateName);
         Assert.Equal("Lit", session.ControlModules().Single(c => c.Path == "U.SRC1").StateName);
 

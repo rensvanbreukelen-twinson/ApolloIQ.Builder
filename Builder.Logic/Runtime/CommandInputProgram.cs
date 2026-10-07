@@ -1,6 +1,7 @@
+using ApolloIQ.Core.Conventions;
 using Builder.Core.Model;
 using Builder.Core.Types;
-using Builder.Logic.Expressions;
+using ApolloIQ.Core.Expressions;
 
 namespace Builder.Logic.Runtime;
 

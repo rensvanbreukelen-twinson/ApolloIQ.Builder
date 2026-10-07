@@ -1,66 +1,64 @@
+using ApolloIQ.Core.Blueprints;
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Versioning;
 using Builder.Core.Model;
-using System.Text.Json.Nodes;
-using Builder.Core.Tags;
 
 namespace Builder.Core.Types;
 
+/// <summary>A published blueprint as the runtime and the instance factory use it (made by <c>BlueprintTypes.ToCmType</c>).</summary>
 public sealed class CmType
 {
-    public const string Schema = "apolloiq.cmtype/1";
+    public required Guid Id { get; init; }
 
     public required string Name { get; init; }
 
-    public required string Version { get; init; }
+    public BlueprintVersion Version { get; init; } = BlueprintVersion.Initial;
+
+    public BlueprintKind Kind { get; init; } = BlueprintKind.CM;
 
     public string Description { get; init; } = "";
 
-    public IReadOnlyList<EnumDefinition> Enums { get; init; } = [];
-
-    public IReadOnlyList<StateDefinition> SubStates { get; init; } = [];
-
+    /// <summary>Blueprint aliases: alias → state name or standard alias.</summary>
     public IReadOnlyDictionary<string, string> Aliases { get; init; } = new Dictionary<string, string>();
 
     public IReadOnlyList<TagTemplate> Tags { get; init; } = [];
 
-    public JsonNode? Logic { get; init; }
+    public LogicModel Logic { get; init; } = LogicModel.Empty;
 
-    public string? Builtin { get; init; }
+    public IReadOnlyList<CmAlarm> Alarms { get; init; } = [];
 
-    public bool IsPriorityInputControl => Builtin == PicBehaviour.Builtin;
-
-    public IReadOnlyList<AlarmDefinition> Alarms { get; init; } = [];
-
-    public IReadOnlyList<StateDefinition>? StateList { get; init; }
+    /// <summary>The object's own named states (the blueprint's states and Unavailable), not the categories.</summary>
+    public IReadOnlyList<StateDefinition> ObjectStates { get; init; } = [];
 
     public int InitialState { get; init; }
-
-    public bool ExactStates { get; init; }
-
-    public string? Blueprint { get; init; }
 
     public CommandInputConfig? DefaultCommandInputs { get; init; }
 
     public IReadOnlyList<string> SingleCommands { get; init; } = [];
 
-    public bool IsUnit { get; init; }
-
-    public bool IsEquipmentModule { get; init; }
-
-    public IReadOnlyDictionary<string, string> Roles { get; init; } = new Dictionary<string, string>();
-
-    public IReadOnlyList<StateDefinition> States =>
-        StateList ?? UniversalStates.All.Concat(SubStates).OrderBy(s => s.Code).ToList();
-
-    public IEnumerable<TagTemplate> OptionalTags => Tags.Where(t => t.Optional);
+    /// <summary>Role name → blueprint id (EM and Unit).</summary>
+    public IReadOnlyDictionary<string, Guid> Roles { get; init; } = new Dictionary<string, Guid>();
 
     public IReadOnlyList<InterlockRule> Interlocks { get; init; } = [];
 
-    public IReadOnlyList<TagTemplate> ExpandTags(IEnumerable<string>? includeOptional = null)
+    public bool IsUnit => Kind != BlueprintKind.CM;
+
+    public bool IsEquipmentModule => Kind == BlueprintKind.EM;
+
+    /// <summary>The names usable in a state comparison: the categories (whole range) and the object's own states (exact code).</summary>
+    public IReadOnlyList<StateDefinition> States => StateNames.For(ObjectStates);
+
+    public bool HasState(int code) => ObjectStates.Any(s => s.Code == code) || code == UniversalStates.Unavailable;
+
+    public string StateName(int code) =>
+        ObjectStates.FirstOrDefault(s => s.Code == code)?.Name
+        ?? UniversalStates.Category(code)?.Name
+        ?? code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    public IReadOnlyList<TagTemplate> ExpandTags()
     {
-        var optional = new HashSet<string>(includeOptional ?? [], StringComparer.OrdinalIgnoreCase);
-        var declared = Tags.Where(t => !t.Optional || optional.Contains($"{t.Group.Code()}.{t.Name}")).ToList();
         var result = new List<TagTemplate>(BaseBehaviour.StatusTags);
-        foreach (var tag in declared)
+        foreach (var tag in Tags)
         {
             result.Add(tag);
             if (!BaseBehaviour.IsConditioned(tag))
@@ -69,18 +67,8 @@ public sealed class CmType
             if (tag.Source == TagSource.Hardwired)
                 result.Add(BaseBehaviour.InvertSetting(tag));
         }
-        foreach (var alarm in Alarms.Where(a => a.Requires is null || optional.Contains(a.Requires)))
-        {
-            result.AddRange(alarm.Parameters);
-            if (alarm.Plc)
-                result.AddRange(BaseBehaviour.AlarmTags(alarm));
-        }
+        foreach (var alarm in Alarms.Where(a => a.PlcReactive && a.Source != AlarmSource.StuckInput))
+            result.AddRange(BaseBehaviour.AlarmTags(alarm.Name));
         return result;
-    }
-
-    public IEnumerable<AlarmDefinition> AlarmsFor(IEnumerable<string> optionalTags)
-    {
-        var optional = new HashSet<string>(optionalTags, StringComparer.OrdinalIgnoreCase);
-        return Alarms.Where(a => a.Requires is null || optional.Contains(a.Requires));
     }
 }

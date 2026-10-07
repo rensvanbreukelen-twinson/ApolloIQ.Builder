@@ -6,15 +6,7 @@ namespace Builder.Tests.Simulator;
 
 public class ScenarioTests
 {
-    private static readonly CmLibrary Library = CmLibrary.LoadDirectory(Path.Combine(AppContext.BaseDirectory, "cm-types"));
-    private static readonly string ScenarioDirectory = Path.Combine(AppContext.BaseDirectory, "scenarios");
-
-    private static ScenarioReport RunLibrary()
-    {
-        var (files, errors) = ScenarioLoader.LoadDirectory(ScenarioDirectory);
-        Assert.Empty(errors);
-        return new ScenarioRunner(Library).RunAll(files, errors);
-    }
+    private static readonly CmLibrary Library = Fixtures.Library();
 
     private static ScenarioFile File(string steps, string instances = "") => ScenarioLoader.Parse($$"""
         { "schema": "apolloiq.scenarios/1", "type": "CircuitBreaker",
@@ -22,43 +14,21 @@ public class ScenarioTests
         """, "test.scenarios.json");
 
     [Fact]
-    public void LibraryScenariosPass()
-    {
-        var report = RunLibrary();
-        var failures = report.Results.Where(r => !r.Passed)
-            .Select(r => $"{r.Type} '{r.Name}': {string.Join("; ", r.Failures.Select(f => $"{f.Location} (cycle {f.Cycle}) {f.Message}"))}");
-        Assert.True(!failures.Any(), string.Join(Environment.NewLine, failures));
-        Assert.True(report.Passed >= 30);
-    }
-
-    [Fact]
-    public void LibraryScenariosCoverEveryTransition()
-    {
-        var report = RunLibrary();
-        foreach (var type in new[] { "GenSet", "CircuitBreaker" })
-        {
-            var coverage = report.Coverage.Single(c => c.Type == type);
-            Assert.Empty(coverage.Transitions.Where(t => t.Hits == 0).Select(t => $"{type} [{t.Index}] {t.Name}: {t.From} → {t.To}"));
-            Assert.Equal(coverage.Total, coverage.Covered);
-        }
-    }
-
-    [Fact]
     public void FailingExpectationReportsTheStepAndStates()
     {
-        var file = File("""[ { "run": 2 }, { "expect": "STS.state = Running" } ]""");
+        var file = File("""[ { "run": 2 }, { "expect": "[STS.state] == Running" } ]""");
         var result = new ScenarioRunner(Library).Run(file, file.Scenarios[0]);
         Assert.False(result.Passed);
         var failure = Assert.Single(result.Failures);
         Assert.Equal("scenarios[0].steps[1]", failure.Location);
-        Assert.Contains("CM = 200 Available", failure.Message);
+        Assert.Contains("CM = 200 Open", failure.Message);
         Assert.Equal(2, failure.Cycle);
     }
 
     [Fact]
     public void UntilTimesOut()
     {
-        var file = File("""[ { "until": "is_closed", "within": "0.5 s" } ]""");
+        var file = File("""[ { "until": "[is_closed]", "within": "0.5 s" } ]""");
         var result = new ScenarioRunner(Library).Run(file, file.Scenarios[0]);
         Assert.False(result.Passed);
         Assert.Contains("within 10 cycles", result.Failures[0].Message);
@@ -68,7 +38,7 @@ public class ScenarioTests
     [Fact]
     public void TraceRecordsStatesAndOutputChanges()
     {
-        var file = File("""[ { "run": 2 }, { "set": { "CMD.set_on": true } }, { "run": 2 } ]""");
+        var file = File("""[ { "run": 2 }, { "set": { "CMD.HMI_on": true } }, { "run": 2 } ]""");
         var result = new ScenarioRunner(Library).Run(file, file.Scenarios[0]);
         Assert.True(result.Passed);
         Assert.Equal([1L, 2, 3, 4], result.Trace.Select(t => t.Cycle));
@@ -83,25 +53,34 @@ public class ScenarioTests
     {
         var file = File("""
             [ { "run": 2 },
-              { "set": { "B.CMD.set_on": true } },
+              { "set": { "B.CMD.HMI_on": true } },
               { "run": 2 },
-              { "expect": ["B: is_closed", "[SIM.B.is_closed] AND NOT is_closed"] } ]
+              { "expect": ["B: [is_closed]", "[SIM.B.is_closed] && ![is_closed]"] } ]
             """, """ "instances": [ { "name": "A" }, { "name": "B" } ], """);
         var result = new ScenarioRunner(Library).Run(file, file.Scenarios[0]);
         Assert.True(result.Passed, string.Join("; ", result.Failures.Select(f => f.Message)));
     }
 
     [Theory]
-    [InlineData("""{ "schema": "x", "type": "GenSet", "scenarios": [] }""", "schema")]
+    [InlineData("""{ "schema": "x", "type": "Light", "scenarios": [] }""", "schema")]
     [InlineData("""{ "schema": "apolloiq.scenarios/1", "scenarios": [] }""", "type")]
-    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "GenSet", "scenarios": [ { "name": "a", "steps": [ { "wait": 1 } ] } ] }""", "scenarios[0].steps[0].wait")]
-    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "GenSet", "scenarios": [ { "name": "a", "steps": [ { "run": "soon" } ] } ] }""", "scenarios[0].steps[0].run")]
-    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "GenSet", "scenarios": [ { "name": "a", "steps": [ { "until": "is_running" } ] } ] }""", "scenarios[0].steps[0].within")]
-    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "GenSet", "scenarios": [ { "name": "a", "steps": [] }, { "name": "a", "steps": [] } ] }""", "scenarios[1].name")]
+    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "Light", "scenarios": [ { "name": "a", "steps": [ { "wait": 1 } ] } ] }""", "scenarios[0].steps[0].wait")]
+    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "Light", "scenarios": [ { "name": "a", "steps": [ { "run": "soon" } ] } ] }""", "scenarios[0].steps[0].run")]
+    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "Light", "scenarios": [ { "name": "a", "steps": [ { "until": "[is_running]" } ] } ] }""", "scenarios[0].steps[0].within")]
+    [InlineData("""{ "schema": "apolloiq.scenarios/1", "type": "Light", "scenarios": [ { "name": "a", "steps": [] }, { "name": "a", "steps": [] } ] }""", "scenarios[1].name")]
     public void InvalidFilesAreRejectedWithTheirLocation(string json, string location)
     {
         var ex = Assert.Throws<ScenarioException>(() => ScenarioLoader.Parse(json, "bad.scenarios.json"));
         Assert.Contains(ex.Errors, e => e.Location == location);
+    }
+
+    [Fact]
+    public void TheOldConditionSyntaxIsReported()
+    {
+        var file = File("""[ { "run": 1 }, { "expect": "STS.state = Open" } ]""");
+        var result = new ScenarioRunner(Library).Run(file, file.Scenarios[0]);
+        Assert.False(result.Passed);
+        Assert.Contains("use ==", result.Failures[0].Message);
     }
 
     [Fact]

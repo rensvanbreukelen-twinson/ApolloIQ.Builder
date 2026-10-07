@@ -1,7 +1,7 @@
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
-using Builder.Logic.Expressions;
+using ApolloIQ.Core.Expressions;
 using Builder.Logic.Model;
 using Builder.Logic.Runtime;
 
@@ -186,8 +186,18 @@ public sealed class SimulationSession : IAsyncDisposable
     {
         lock (_gate)
             return _program.Programs
-                .Select(p => new SimControlModule(p.Id, p.Path, p.Type.Name, p.State, p.StateName(p.State), p.StateCycles * _program.CycleSeconds))
+                .Select(p => new SimControlModule(p.Id, p.Path, p.Type.Name, p.State, p.StateName(p.State), p.StateText(p.State), p.StateCycles * _program.CycleSeconds))
                 .ToList();
+    }
+
+    /// <summary>
+    /// Every alarm in the simulation: PLC reactive alarms as the PLC logic raises them, the others evaluated as SCADA will
+    /// (the shared alarm trigger logic).
+    /// </summary>
+    public IReadOnlyList<AlarmStatus> Alarms()
+    {
+        lock (_gate)
+            return _program.AlarmStatuses();
     }
 
     public Func<Value> Condition(string controlModulePath, string expression)

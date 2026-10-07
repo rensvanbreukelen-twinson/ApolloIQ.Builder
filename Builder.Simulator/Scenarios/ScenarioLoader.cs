@@ -12,7 +12,7 @@ public static partial class ScenarioLoader
     private static readonly JsonDocumentOptions Options = new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
     private static readonly HashSet<string> RootProperties = ["schema", "type", "scenarios"];
     private static readonly HashSet<string> ScenarioProperties = ["name", "description", "instances", "steps"];
-    private static readonly HashSet<string> InstanceProperties = ["name", "type", "optionalTags", "wires", "pic", "commandInputs", "parent", "role"];
+    private static readonly HashSet<string> InstanceProperties = ["name", "type", "wires", "commandInputs", "parent", "role"];
     private static readonly HashSet<string> StepKinds = ["set", "force", "release", "bad", "good", "run", "until", "within", "expect", "note"];
 
     public static (IReadOnlyList<ScenarioFile> Files, IReadOnlyList<ScenarioError> Errors) LoadDirectory(string directory)
@@ -117,7 +117,7 @@ public static partial class ScenarioLoader
     private static List<ScenarioInstance> Instances(JsonElement scenario, string type, string at, Action<string, string> error)
     {
         if (!scenario.TryGetProperty("instances", out var list))
-            return [new ScenarioInstance("CM", type, [])];
+            return [new ScenarioInstance("CM", type)];
         var result = new List<ScenarioInstance>();
         if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() == 0)
         {
@@ -138,9 +138,6 @@ public static partial class ScenarioLoader
             var instanceType = Text(item, "type") ?? type;
             if (string.IsNullOrWhiteSpace(name))
                 error($"{location}.name", "'name' is required.");
-            var optional = item.TryGetProperty("optionalTags", out var o) && o.ValueKind == JsonValueKind.Array
-                ? o.EnumerateArray().Select(e => e.GetString() ?? "").ToList()
-                : [];
             var wires = new List<ScenarioWire>();
             if (item.TryGetProperty("wires", out var wireList))
             {
@@ -161,9 +158,8 @@ public static partial class ScenarioLoader
                     }
                 }
             }
-            JsonElement? pic = item.TryGetProperty("pic", out var picElement) ? picElement.Clone() : null;
             JsonElement? inputs = item.TryGetProperty("commandInputs", out var inputElement) ? inputElement.Clone() : null;
-            result.Add(new ScenarioInstance(name ?? location, instanceType, optional, wires, pic, inputs, Text(item, "parent"), Text(item, "role")));
+            result.Add(new ScenarioInstance(name ?? location, instanceType, wires, inputs, Text(item, "parent"), Text(item, "role")));
         }
         return result;
     }

@@ -1,17 +1,20 @@
+using ApolloIQ.Core.Versioning;
+
 namespace Builder.Core.Model;
 
-public sealed class UnitInstance(Guid id, string name, Guid? parentId, string blueprintName, string blueprintVersion, bool isEquipmentModule = false)
+/// <summary>An instance of a Unit or Equipment module blueprint.</summary>
+public sealed class UnitInstance(Guid id, string name, Guid? parentId, Guid blueprintId, BlueprintVersion blueprintVersion, bool isEquipmentModule = false)
     : ProjectObject(id, name, parentId)
 {
     public override ObjectKind Kind => ObjectKind.Unit;
 
-    public string BlueprintName { get; } = blueprintName;
+    public Guid BlueprintId { get; } = blueprintId;
 
     public bool IsEquipmentModule { get; } = isEquipmentModule;
 
     public string RowName => IsEquipmentModule ? CommandInputConfig.EmRow : CommandInputConfig.UnitRow;
 
-    public string BlueprintVersion { get; } = blueprintVersion;
+    public BlueprintVersion BlueprintVersion { get; } = blueprintVersion;
 
     internal Dictionary<string, Guid> Members { get; } = new(StringComparer.Ordinal);
 

@@ -1,3 +1,5 @@
+using ApolloIQ.Core.Alarms;
+using ApolloIQ.Core.Conventions;
 using Builder.Core.Types;
 
 namespace Builder.Core.Model;
@@ -19,7 +21,7 @@ public enum TripEscalation
 /// <summary>
 /// One line in an interlock list (G-172). A blueprint names its target by role path ("" = itself, "BREAKER", "GEN1.BREAKER");
 /// a project instance names it by object ID (null = itself). Permissives describe when the target may switch; a trip
-/// describes when it must switch off.
+/// describes when it must switch off. Conditions use the ApolloIQ.Core syntax: <c>![ENGINE.is_running]</c>.
 /// </summary>
 public sealed class InterlockRule
 {
@@ -35,9 +37,14 @@ public sealed class InterlockRule
 
     public string Text { get; set; } = "";
 
+    /// <summary>Trip only: the name of the alarm on the owner (default Trip1, Trip2, …).</summary>
     public string? Alarm { get; set; }
 
-    public int Severity { get; set; } = SeverityBands.DefaultSeverity;
+    /// <summary>Trip only: the stable id of that alarm, assigned on save and kept on rename.</summary>
+    public Guid? AlarmId { get; set; }
+
+    /// <summary>Trip only: the alarm priority 0–30.</summary>
+    public int Priority { get; set; } = AlarmPriority.Default;
 
     public TripEscalation Escalate { get; set; } = TripEscalation.None;
 
@@ -55,6 +62,7 @@ public sealed class InterlockRule
             if (rule.Kind != InterlockKind.Trip)
             {
                 rule.Alarm = null;
+                rule.AlarmId = null;
                 rule.Escalate = TripEscalation.None;
                 continue;
             }
@@ -64,7 +72,15 @@ public sealed class InterlockRule
         return list;
     }
 
-    public static AlarmDefinition TripAlarm(InterlockRule rule, string fallbackText) =>
-        new(rule.Alarm!, rule.Severity, new Dictionary<string, string> { ["en"] = string.IsNullOrWhiteSpace(rule.Text) ? fallbackText : rule.Text },
-            "FALSE", "TRUE", true, null, [], Trip: true);
+    /// <summary>The alarm of a trip line: PLC reactive (the interlock logic raises it), latched until reset.</summary>
+    public static CmAlarm TripAlarm(InterlockRule rule, string fallbackText) => new(new AlarmDefinition
+    {
+        Id = rule.AlarmId ?? Guid.Empty,
+        Name = rule.Alarm!,
+        Priority = rule.Priority,
+        Message = string.IsNullOrWhiteSpace(rule.Text) ? fallbackText : rule.Text,
+        Trigger = AlarmTrigger.State,
+        PlcReactive = true,
+        Condition = rule.Condition
+    }, AlarmSource.Trip, Latched: true);
 }

@@ -10,7 +10,7 @@ public class ProjectTests
     {
         var project = new Project();
         var pms = project.AddFolder("PMS");
-        var gen1 = project.AddControlModule("GEN1", pms.Id, "GenSet", "1.0.0");
+        var gen1 = project.AddControlModule("GEN1", pms.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         Assert.Equal("PMS.GEN1", project.GetPath(gen1.Id));
     }
 
@@ -20,7 +20,7 @@ public class ProjectTests
         var project = new Project();
         var pms = project.AddFolder("PMS");
         var aux = project.AddFolder("AUX");
-        var gen1 = project.AddControlModule("GEN1", pms.Id, "GenSet", "1.0.0");
+        var gen1 = project.AddControlModule("GEN1", pms.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
 
         project.Rename(gen1.Id, "GEN_PORT");
         Assert.Equal("PMS.GEN_PORT", project.GetPath(gen1.Id));
@@ -34,7 +34,7 @@ public class ProjectTests
     public void RenameKeepsTheId()
     {
         var project = new Project();
-        var gen1 = project.AddControlModule("GEN1", null, "GenSet", "1.0.0");
+        var gen1 = project.AddControlModule("GEN1", null, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         var id = gen1.Id;
         project.Rename(id, "GEN2");
         Assert.Equal(id, project.Get(id).Id);
@@ -46,8 +46,8 @@ public class ProjectTests
     {
         var project = new Project();
         var pms = project.AddFolder("PMS");
-        project.AddControlModule("GEN1", pms.Id, "GenSet", "1.0.0");
-        var ex = Assert.Throws<ProjectException>(() => project.AddControlModule("gen1", pms.Id, "GenSet", "1.0.0"));
+        project.AddControlModule("GEN1", pms.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
+        var ex = Assert.Throws<ProjectException>(() => project.AddControlModule("gen1", pms.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial));
         Assert.Equal(ProjectErrors.DuplicateName, ex.Code);
     }
 
@@ -57,8 +57,8 @@ public class ProjectTests
         var project = new Project();
         var a = project.AddFolder("A");
         var b = project.AddFolder("B");
-        project.AddControlModule("P1", a.Id, "Pump", "1.0.0");
-        project.AddControlModule("P1", b.Id, "Pump", "1.0.0");
+        project.AddControlModule("P1", a.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
+        project.AddControlModule("P1", b.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         Assert.Equal("B.P1", project.GetPath(project.GetChildren(b.Id)[0].Id));
     }
 
@@ -92,7 +92,7 @@ public class ProjectTests
     public void TagNamesAreNotLimitedByTheProjectMaximum()
     {
         var project = new Project(new ProjectSettings { MaxNameLength = 4 });
-        var cm = project.AddControlModule("GEN1", null, "GenSet", "1.0.0");
+        var cm = project.AddControlModule("GEN1", null, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         project.AddTag(cm.Id, new Builder.Core.Tags.TagDefinition("mean_switch_count_to_failure",
             Builder.Core.Tags.TagGroup.Par, Builder.Core.Tags.TagDataType.Int32, Builder.Core.Tags.TagDirection.InOut));
         Assert.Single(project.Tags);
@@ -112,7 +112,7 @@ public class ProjectTests
     public void ControlModuleCannotContainFolders()
     {
         var project = new Project();
-        var gen1 = project.AddControlModule("GEN1", null, "GenSet", "1.0.0");
+        var gen1 = project.AddControlModule("GEN1", null, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         var ex = Assert.Throws<ProjectException>(() => project.AddFolder("X", gen1.Id));
         Assert.Equal(ProjectErrors.InvalidParent, ex.Code);
     }
@@ -122,7 +122,7 @@ public class ProjectTests
     {
         var project = new Project();
         var pms = project.AddFolder("PMS");
-        project.AddControlModule("GEN1", pms.Id, "GenSet", "1.0.0");
+        project.AddControlModule("GEN1", pms.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         var removed = project.Delete(pms.Id);
         Assert.Equal(2, removed.Count);
         Assert.Empty(project.Objects);

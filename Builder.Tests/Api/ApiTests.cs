@@ -25,9 +25,9 @@ public sealed class ApiTests : IAsyncLifetime
     private async Task<TreeNodeDto> Folder(Guid projectId, string name, Guid? parentId = null) =>
         await _server.Post<TreeNodeDto>($"/api/projects/{projectId}/folders", new CreateFolderRequest(name, parentId));
 
-    private async Task<TreeNodeDto> Cm(Guid projectId, string type, string name, Guid? parentId, params string[] optional) =>
+    private async Task<TreeNodeDto> Cm(Guid projectId, Guid blueprint, string name, Guid? parentId) =>
         await _server.Post<TreeNodeDto>($"/api/projects/{projectId}/control-modules",
-            new CreateControlModuleRequest(type, name, parentId, optional));
+            new CreateControlModuleRequest(blueprint, name, parentId));
 
     private static async Task<ApiError> Error(HttpResponseMessage response) =>
         (await response.Content.ReadFromJsonAsync<ApiError>(ApiServer.Json, Ct))!;
@@ -40,13 +40,11 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task LibraryListsTheTypesWithOptionalTags()
+    public async Task LibraryListsThePublishedCmBlueprints()
     {
         var types = await _server.Get<List<CmTypeDto>>("/api/library/types");
-        Assert.Equal(["CircuitBreaker", "GenSet", "PriorityInputControl", "PushButton"], types.Select(t => t.Name));
-        Assert.Contains(types.Single(t => t.Name == "GenSet").OptionalTags, o => o.Key == "FIN.exhaust_temp" && o.AddsTags == 4);
-        Assert.Contains(types.Single(t => t.Name == "CircuitBreaker").OptionalTags, o => o.Key == "FIN.spring_charged" && o.AddsTags == 6);
-        Assert.Empty(await _server.Get<List<LibraryErrorDto>>("/api/library/errors"));
+        Assert.Equal(["CircuitBreaker", "Light", "PushButton"], types.Select(t => t.Name));
+        Assert.Equal((Fixtures.Light, "0.1.0"), (types.Single(t => t.Name == "Light").Id, types.Single(t => t.Name == "Light").Version));
     }
 
     [Fact]
@@ -71,8 +69,8 @@ public sealed class ApiTests : IAsyncLifetime
     {
         var project = await NewProject();
         var pms = await Folder(project.Id, "PMS");
-        await Cm(project.Id, "GenSet", "GEN1", pms.Id);
-        await Cm(project.Id, "CircuitBreaker", "GEN1_CB", pms.Id);
+        await Cm(project.Id, Fixtures.Light, "GEN1", pms.Id);
+        await Cm(project.Id, Fixtures.CircuitBreaker, "GEN1_CB", pms.Id);
         await Folder(project.Id, "Switchboard", pms.Id);
 
         var tree = await _server.Get<List<TreeNodeDto>>($"/api/projects/{project.Id}/tree");
@@ -82,8 +80,8 @@ public sealed class ApiTests : IAsyncLifetime
         var gen1 = root.Children.Single(c => c.Name == "GEN1");
         Assert.Equal("controlModule", gen1.Kind);
         Assert.Equal("PMS.GEN1", gen1.Path);
-        Assert.Equal("GenSet", gen1.TypeName);
-        Assert.True(gen1.TagCount > 50);
+        Assert.Equal(("Light", "0.1.0", (Guid?)Fixtures.Light), (gen1.TypeName, gen1.TypeVersion, gen1.BlueprintId));
+        Assert.True(gen1.TagCount > 30);
     }
 
     [Fact]
@@ -102,9 +100,9 @@ public sealed class ApiTests : IAsyncLifetime
     {
         var project = await NewProject();
         var pms = await Folder(project.Id, "PMS");
-        await Cm(project.Id, "GenSet", "GEN1", pms.Id);
+        await Cm(project.Id, Fixtures.Light, "GEN1", pms.Id);
         var response = await _server.Client.PostAsJsonAsync($"/api/projects/{project.Id}/control-modules",
-            new CreateControlModuleRequest("CircuitBreaker", "GEN1", pms.Id, null), Ct);
+            new CreateControlModuleRequest(Fixtures.CircuitBreaker, "GEN1", pms.Id), Ct);
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
@@ -121,7 +119,7 @@ public sealed class ApiTests : IAsyncLifetime
     {
         var project = await NewProject();
         var pms = await Folder(project.Id, "PMS");
-        var gen1 = await Cm(project.Id, "GenSet", "GEN1", pms.Id);
+        var gen1 = await Cm(project.Id, Fixtures.Light, "GEN1", pms.Id);
         var before = await _server.Get<List<TagDto>>($"/api/projects/{project.Id}/tags?scope={gen1.Id}");
 
         var response = await _server.Client.PatchAsJsonAsync($"/api/projects/{project.Id}/objects/{gen1.Id}", new RenameRequest("GEN_PORT"), Ct);
@@ -148,7 +146,7 @@ public sealed class ApiTests : IAsyncLifetime
     {
         var project = await NewProject();
         var pms = await Folder(project.Id, "PMS");
-        var gen1 = await Cm(project.Id, "GenSet", "GEN1", pms.Id);
+        var gen1 = await Cm(project.Id, Fixtures.Light, "GEN1", pms.Id);
 
         var summary = await _server.Get<DeletionSummaryDto>($"/api/projects/{project.Id}/objects/{pms.Id}/deletion-summary");
         Assert.Equal(new DeletionSummaryDto(1, 1, gen1.TagCount), summary);
@@ -163,30 +161,22 @@ public sealed class ApiTests : IAsyncLifetime
     {
         var project = await NewProject();
         var pms = await Folder(project.Id, "PMS");
-        var gen1 = await Cm(project.Id, "GenSet", "GEN1", pms.Id);
-        await Cm(project.Id, "CircuitBreaker", "GEN1_CB", pms.Id);
+        var gen1 = await Cm(project.Id, Fixtures.Light, "GEN1", pms.Id);
+        await Cm(project.Id, Fixtures.CircuitBreaker, "GEN1_CB", pms.Id);
 
         var commands = await _server.Get<List<TagDto>>($"/api/projects/{project.Id}/tags?scope={gen1.Id}&group=CMD");
-        Assert.Equal(["PMS.GEN1.CMD.reset", "PMS.GEN1.CMD.set_off", "PMS.GEN1.CMD.set_on"], commands.Select(t => t.Path));
+        Assert.Equal(["PMS.GEN1.CMD.HMI_off", "PMS.GEN1.CMD.HMI_on", "PMS.GEN1.CMD.HMI_reset", "PMS.GEN1.CMD.reset", "PMS.GEN1.CMD.set_off", "PMS.GEN1.CMD.set_on"],
+            commands.Select(t => t.Path));
 
         var external = await _server.Get<List<TagDto>>($"/api/projects/{project.Id}/tags?kind=External&search=gen1_cb");
         Assert.All(external, t => Assert.Equal("FIN", t.Group));
         Assert.Equal(["feedback", "power_ok", "remote", "tripped"], external.Select(t => t.Name));
 
         var outputs = await _server.Get<List<TagDto>>($"/api/projects/{project.Id}/tags?direction=Out&group=OUT");
-        Assert.Equal(5, outputs.Count);
+        Assert.Equal(["PMS.GEN1.OUT.lamp", "PMS.GEN1_CB.OUT.coil_off", "PMS.GEN1_CB.OUT.coil_on"], outputs.Select(t => t.Path));
 
         var bad = await _server.Client.GetAsync($"/api/projects/{project.Id}/tags?group=XYZ", Ct);
         Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
-    }
-
-    [Fact]
-    public async Task OptionalTagsAreCreatedWhenRequested()
-    {
-        var project = await NewProject();
-        var gen1 = await Cm(project.Id, "GenSet", "GEN1", null, "FIN.exhaust_temp");
-        var tags = await _server.Get<List<TagDto>>($"/api/projects/{project.Id}/tags?scope={gen1.Id}&search=exhaust");
-        Assert.Equal(["GEN1.ALM.ExhaustTempHigh.active", "GEN1.ALM.ExhaustTempHigh.enabled", "GEN1.ALM.ExhaustTempHigh.raise_count", "GEN1.FIN.exhaust_temp"], tags.Select(t => t.Path).Order());
     }
 
     [Fact]
@@ -194,7 +184,7 @@ public sealed class ApiTests : IAsyncLifetime
     {
         var project = await NewProject();
         var pms = await Folder(project.Id, "PMS");
-        var gen1 = await Cm(project.Id, "GenSet", "GEN1", pms.Id);
+        var gen1 = await Cm(project.Id, Fixtures.Light, "GEN1", pms.Id);
         var root = _server.ProjectsRoot;
         await _server.DisposeAsync();
 
@@ -204,55 +194,19 @@ public sealed class ApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ExportProfileDefaultsAndCanBeSaved()
+    public async Task ConventionsAreTheSharedOnes()
     {
-        var project = await NewProject();
-        var profile = await _server.Get<HmiExportProfileDto>($"/api/projects/{project.Id}/export/hmi-profile");
-        Assert.Equal(new HmiExportProfileDto(null, 1000, "Path", 0), profile);
-
-        var connection = Guid.Parse("c1d2e3f4-a5b6-7890-cdef-111122223333");
-        var response = await _server.Client.PutAsJsonAsync($"/api/projects/{project.Id}/export/hmi-profile",
-            new UpdateHmiExportProfileRequest(connection, 500, "SymbolKey"), ApiServer.Json, Ct);
-        response.EnsureSuccessStatusCode();
-
-        var saved = await _server.Get<HmiExportProfileDto>($"/api/projects/{project.Id}/export/hmi-profile");
-        Assert.Equal(new HmiExportProfileDto(connection, 500, "SymbolKey", 0), saved);
-        Assert.Contains("\"hmiExport\"", await File.ReadAllTextAsync(Path.Combine(_server.ProjectsRoot, project.Id.ToString(), "project.json"), Ct));
+        var conventions = await _server.Get<System.Text.Json.JsonElement>("/api/conventions");
+        Assert.Equal(25, conventions.GetProperty("defaultAlarmPriority").GetInt32());
+        Assert.Equal(3, conventions.GetProperty("alarmPriorityBands").GetArrayLength());
     }
 
     [Fact]
-    public async Task InvalidExportProfileIsRejectedOnTheField()
+    public async Task ExamplesAndTheOldExportsAreGone()
     {
         var project = await NewProject();
-        var response = await _server.Client.PutAsJsonAsync($"/api/projects/{project.Id}/export/hmi-profile",
-            new UpdateHmiExportProfileRequest(null, 5, "Path"), ApiServer.Json, Ct);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal("scanRateMs", (await Error(response)).Field);
-
-        response = await _server.Client.PutAsJsonAsync($"/api/projects/{project.Id}/export/hmi-profile",
-            new UpdateHmiExportProfileRequest(null, 1000, "Register"), ApiServer.Json, Ct);
-        Assert.Equal("address", (await Error(response)).Field);
-    }
-
-    [Fact]
-    public async Task ExportDownloadsTagsJson()
-    {
-        var project = await NewProject();
-        var pms = await Folder(project.Id, "PMS");
-        var gen1 = await Cm(project.Id, "GenSet", "GEN1", pms.Id);
-        var connection = Guid.NewGuid();
-        (await _server.Client.PutAsJsonAsync($"/api/projects/{project.Id}/export/hmi-profile",
-            new UpdateHmiExportProfileRequest(connection, 1000, "Path"), ApiServer.Json, Ct)).EnsureSuccessStatusCode();
-
-        var response = await _server.Client.GetAsync($"/api/projects/{project.Id}/export/hmi-tags", Ct);
-        response.EnsureSuccessStatusCode();
-        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
-        Assert.Equal("tags.json", response.Content.Headers.ContentDisposition?.FileNameStar ?? response.Content.Headers.ContentDisposition?.FileName);
-
-        var json = System.Text.Json.Nodes.JsonNode.Parse(await response.Content.ReadAsStringAsync(Ct))!;
-        var tags = json["tags"]!.AsArray();
-        Assert.Equal(gen1.TagCount, tags.Count);
-        Assert.All(tags, t => Assert.Equal(connection.ToString(), t!["connectionId"]!.GetValue<string>()));
-        Assert.Contains(tags, t => t!["name"]!.GetValue<string>() == "PMS.GEN1.STS.state");
+        Assert.Equal(HttpStatusCode.NotFound, (await _server.Client.GetAsync("/api/examples", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _server.Client.GetAsync($"/api/projects/{project.Id}/export/hmi-tags", Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _server.Client.GetAsync($"/api/projects/{project.Id}/export/hmi-profile", Ct)).StatusCode);
     }
 }

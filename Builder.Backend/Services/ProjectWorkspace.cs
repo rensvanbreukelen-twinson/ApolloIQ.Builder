@@ -72,6 +72,6 @@ public sealed class ProjectWorkspace(string root)
     private static ProjectSession Open(string directory)
     {
         var loaded = ProjectStore.Load(directory);
-        return new ProjectSession(loaded.Id, loaded.Name, directory, loaded.Project, loaded.HmiExport);
+        return new ProjectSession(loaded.Id, loaded.Name, directory, loaded.Project);
     }
 }

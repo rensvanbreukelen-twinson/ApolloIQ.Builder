@@ -1,0 +1,491 @@
+{
+  "schema": "apolloiq.blueprint/1",
+  "id": "0b1e0000-0000-4000-8000-000000000003",
+  "kind": "CM",
+  "name": "CircuitBreaker",
+  "version": "0.1.0",
+  "description": "Generic breaker: generator, bus-tie, shore connection, feeders and consumers. Held or bistable (pulsed) coils.",
+  "interfaces": [
+    "Base",
+    "Switchable",
+    "Resettable",
+    "Interlocks"
+  ],
+  "tags": [
+    {
+      "id": "f7a54771-8194-52b4-bcef-5b03530e9ee5",
+      "group": "FIN",
+      "name": "feedback",
+      "dataType": "Bool",
+      "description": "Breaker closed (auxiliary contact)",
+      "source": "LocalIO",
+      "primary": true
+    },
+    {
+      "id": "5613cfaa-6dbd-53d2-94e7-ad23e807818b",
+      "group": "FIN",
+      "name": "power_ok",
+      "dataType": "Bool",
+      "description": "Breaker control power OK",
+      "source": "LocalIO"
+    },
+    {
+      "id": "8eab78a1-bb02-5d0d-8676-d9f5a2e476a1",
+      "group": "FIN",
+      "name": "tripped",
+      "dataType": "Bool",
+      "description": "Trip indication",
+      "source": "LocalIO"
+    },
+    {
+      "id": "bba1b293-aa86-5764-be93-f2d270ad627d",
+      "group": "FIN",
+      "name": "remote",
+      "dataType": "Bool",
+      "description": "Local/remote selector in remote",
+      "source": "LocalIO"
+    },
+    {
+      "id": "933ab7ec-a84f-5b75-a5d6-60beca8cd89c",
+      "group": "OUT",
+      "name": "coil_on",
+      "dataType": "Bool",
+      "description": "Closing coil"
+    },
+    {
+      "id": "0769ae26-767f-53e7-b10a-6e4ec7489204",
+      "group": "OUT",
+      "name": "coil_off",
+      "dataType": "Bool",
+      "description": "Opening (shunt) coil, bistable breakers only"
+    },
+    {
+      "id": "8813e636-9a4d-5414-9e6c-412e53b4e7cd",
+      "group": "PAR",
+      "name": "max_close_time",
+      "dataType": "Real",
+      "description": "Close command to feedback true",
+      "unit": "s",
+      "min": 0.1,
+      "max": 30,
+      "initial": "1"
+    },
+    {
+      "id": "205faecb-c032-5dfc-97dc-7f7aa88c841f",
+      "group": "PAR",
+      "name": "max_open_time",
+      "dataType": "Real",
+      "description": "Open command to feedback false",
+      "unit": "s",
+      "min": 0.1,
+      "max": 30,
+      "initial": "1"
+    },
+    {
+      "id": "50719ed1-be28-569a-aa68-5a670a0766dd",
+      "group": "PAR",
+      "name": "pulse_time",
+      "dataType": "Real",
+      "description": "Coil pulse length (bistable)",
+      "unit": "s",
+      "min": 0.1,
+      "max": 5,
+      "initial": "0.5"
+    },
+    {
+      "id": "2cfc4fd1-a6e9-5ad9-9124-9a414577a6b2",
+      "group": "SET",
+      "name": "invert_output",
+      "dataType": "Bool",
+      "description": "Invert both coil outputs",
+      "initial": "FALSE"
+    },
+    {
+      "id": "6dff597a-d3b1-5838-8358-0e16f2a7d51c",
+      "group": "SET",
+      "name": "bistable",
+      "dataType": "Bool",
+      "description": "Coils are pulsed instead of held",
+      "initial": "FALSE"
+    },
+    {
+      "id": "1da5dd39-53ce-57f1-b20c-887f6942f6ec",
+      "group": "SET",
+      "name": "trip_latches",
+      "dataType": "Bool",
+      "description": "After a trip, CMD.reset is required before closing again",
+      "initial": "TRUE"
+    },
+    {
+      "id": "804d0256-d704-5322-95ee-d1419b4b9845",
+      "group": "INT",
+      "name": "feedback",
+      "dataType": "Bool",
+      "description": "Conditioned feedback"
+    },
+    {
+      "id": "9c2ab05b-22ff-56c2-bde0-7d4a7065b4ef",
+      "group": "INT",
+      "name": "power_ok",
+      "dataType": "Bool",
+      "description": "Conditioned control power"
+    },
+    {
+      "id": "27170c21-a7cc-5c3c-80e4-ba2ad68475a7",
+      "group": "INT",
+      "name": "tripped",
+      "dataType": "Bool",
+      "description": "Conditioned trip indication"
+    },
+    {
+      "id": "a697ff6f-4de1-583b-a69e-145512ed058e",
+      "group": "INT",
+      "name": "remote",
+      "dataType": "Bool",
+      "description": "Conditioned remote selector"
+    },
+    {
+      "id": "8209436e-cb37-5fe6-8927-256cd8dd6dcd",
+      "group": "INT",
+      "name": "trip_latched",
+      "dataType": "Bool",
+      "description": "Set by a trip, cleared by CMD.reset"
+    }
+  ],
+  "states": [
+    {
+      "name": "OpenNotReady",
+      "text": "Open, not ready",
+      "category": 0,
+      "initial": true,
+      "run": [
+        {
+          "tag": "OUT.coil_on",
+          "value": "[SET.invert_output]"
+        },
+        {
+          "tag": "OUT.coil_off",
+          "value": "[SET.invert_output]"
+        }
+      ]
+    },
+    {
+      "name": "Open",
+      "category": 200,
+      "run": [
+        {
+          "tag": "OUT.coil_on",
+          "value": "[SET.invert_output]"
+        },
+        {
+          "tag": "OUT.coil_off",
+          "value": "[SET.invert_output]"
+        }
+      ]
+    },
+    {
+      "name": "Closing",
+      "text": "Closing",
+      "category": 300,
+      "run": [
+        {
+          "tag": "OUT.coil_on",
+          "value": "SEL([SET.bistable], TRUE, STATE_TIME() < [PAR.pulse_time]) ^ [SET.invert_output]"
+        },
+        {
+          "tag": "OUT.coil_off",
+          "value": "[SET.invert_output]"
+        }
+      ],
+      "timeout": {
+        "time": "[PAR.max_close_time]",
+        "goTo": "OpenNotReady",
+        "alarm": "NotClosing",
+        "alarmId": "ee02060e-9bc9-52b2-90f4-0eb00d1f2f1e",
+        "priority": 20
+      }
+    },
+    {
+      "name": "Closed",
+      "category": 400,
+      "run": [
+        {
+          "tag": "OUT.coil_on",
+          "value": "(![SET.bistable]) ^ [SET.invert_output]"
+        },
+        {
+          "tag": "OUT.coil_off",
+          "value": "[SET.invert_output]"
+        }
+      ]
+    },
+    {
+      "name": "Opening",
+      "category": 100,
+      "run": [
+        {
+          "tag": "OUT.coil_on",
+          "value": "[SET.invert_output]"
+        },
+        {
+          "tag": "OUT.coil_off",
+          "value": "SEL([SET.bistable], FALSE, STATE_TIME() < [PAR.pulse_time]) ^ [SET.invert_output]"
+        }
+      ],
+      "timeout": {
+        "time": "[PAR.max_open_time]",
+        "alarm": "NotOpening",
+        "alarmId": "42b4d6b1-6579-5022-a57d-e4fe62c1359f",
+        "priority": 25
+      }
+    },
+    {
+      "name": "Tripped",
+      "text": "Tripped",
+      "category": 500,
+      "run": [
+        {
+          "tag": "OUT.coil_on",
+          "value": "[SET.invert_output]"
+        },
+        {
+          "tag": "OUT.coil_off",
+          "value": "[SET.invert_output]"
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "name": "tripped",
+      "from": [
+        "Closing",
+        "Closed",
+        "Opening"
+      ],
+      "to": "Tripped",
+      "guard": "[INT.tripped]",
+      "priority": 1
+    },
+    {
+      "name": "reset",
+      "from": [
+        "Tripped"
+      ],
+      "to": "OpenNotReady",
+      "guard": "![INT.tripped] && ![INT.trip_latched]",
+      "priority": 1
+    },
+    {
+      "name": "closed_locally",
+      "from": [
+        "OpenNotReady",
+        "Open"
+      ],
+      "to": "Closed",
+      "guard": "[INT.feedback]",
+      "priority": 2
+    },
+    {
+      "name": "ready",
+      "from": [
+        "OpenNotReady"
+      ],
+      "to": "Open",
+      "guard": "![INT.trip_latched]",
+      "priority": 3
+    },
+    {
+      "name": "not_ready",
+      "from": [
+        "Open"
+      ],
+      "to": "OpenNotReady",
+      "guard": "[INT.trip_latched]",
+      "priority": 3
+    },
+    {
+      "name": "close",
+      "from": [
+        "Open"
+      ],
+      "to": "Closing",
+      "guard": "[STS.remote_ok] && [LOK.can_on] && [CMD.set_on]",
+      "priority": 4
+    },
+    {
+      "name": "closed",
+      "from": [
+        "Closing"
+      ],
+      "to": "Closed",
+      "guard": "[INT.feedback]",
+      "priority": 2
+    },
+    {
+      "name": "close_aborted",
+      "from": [
+        "Closing"
+      ],
+      "to": "OpenNotReady",
+      "guard": "![STS.remote_ok] || [CMD.set_off]",
+      "priority": 4
+    },
+    {
+      "name": "open",
+      "from": [
+        "Closed"
+      ],
+      "to": "Opening",
+      "guard": "[STS.remote_ok] && (([CMD.set_off] && [LOK.can_off]) || [LOK.trip])",
+      "priority": 2
+    },
+    {
+      "name": "opened_unexpectedly",
+      "from": [
+        "Closed"
+      ],
+      "to": "OpenNotReady",
+      "guard": "![INT.feedback]",
+      "priority": 3
+    },
+    {
+      "name": "opened",
+      "from": [
+        "Opening"
+      ],
+      "to": "OpenNotReady",
+      "guard": "![INT.feedback]",
+      "priority": 2
+    },
+    {
+      "name": "taken_over_locally",
+      "from": [
+        "Opening"
+      ],
+      "to": "Closed",
+      "guard": "![STS.remote_ok] && [INT.feedback]",
+      "priority": 3
+    }
+  ],
+  "always": [
+    {
+      "tag": "INT.feedback",
+      "value": "[FIN.feedback]"
+    },
+    {
+      "tag": "INT.power_ok",
+      "value": "[FIN.power_ok]"
+    },
+    {
+      "tag": "INT.tripped",
+      "value": "[FIN.tripped]"
+    },
+    {
+      "tag": "INT.remote",
+      "value": "[FIN.remote]"
+    },
+    {
+      "tag": "STS.remote_ok",
+      "value": "[STS.enabled] && [INT.remote] && [INT.power_ok] && GOOD([FIN.feedback])"
+    },
+    {
+      "tag": "INT.trip_latched",
+      "value": "([INT.trip_latched] && ![CMD.reset]) || ([INT.tripped] && [SET.trip_latches])"
+    }
+  ],
+  "alarms": [
+    {
+      "id": "fabd04d8-2543-5aa3-a96f-b5a64017b098",
+      "name": "Tripped",
+      "priority": 25,
+      "message": "{instance_name} tripped",
+      "trigger": "State",
+      "plcReactive": true,
+      "condition": "[INT.tripped] || [INT.trip_latched]",
+      "latched": false
+    },
+    {
+      "id": "e8535f5f-06a3-53fd-b407-3e093e3e093c",
+      "name": "OpenedUnexpectedly",
+      "priority": 20,
+      "message": "{instance_name} opened unexpectedly",
+      "trigger": "State",
+      "plcReactive": true,
+      "condition": "[STS.remote_ok]",
+      "latched": true,
+      "onTransition": "opened_unexpectedly"
+    },
+    {
+      "id": "4ffac390-d579-577b-a0c8-3e059163d1ab",
+      "name": "ClosedUnexpectedly",
+      "priority": 20,
+      "message": "{instance_name} closed unexpectedly",
+      "trigger": "State",
+      "plcReactive": true,
+      "condition": "[STS.remote_ok]",
+      "latched": true,
+      "onTransition": "closed_locally"
+    },
+    {
+      "id": "29cbfbf9-4925-5e0e-9654-97191962ab73",
+      "name": "ControlPowerFailure",
+      "priority": 20,
+      "message": "{instance_name}: control power failure",
+      "trigger": "State",
+      "plcReactive": false,
+      "condition": "![INT.power_ok]",
+      "latched": false
+    },
+    {
+      "id": "3055faa1-af1d-5c70-a4a3-91b8d97fb69c",
+      "name": "InLocal",
+      "priority": 5,
+      "message": "{instance_name} in local",
+      "trigger": "State",
+      "plcReactive": false,
+      "condition": "![INT.remote]",
+      "latched": false
+    }
+  ],
+  "plant": [
+    {
+      "tag": "FIN.power_ok",
+      "value": "TRUE"
+    },
+    {
+      "tag": "FIN.remote",
+      "value": "TRUE"
+    },
+    {
+      "tag": "FIN.tripped",
+      "value": "FALSE"
+    },
+    {
+      "tag": "FIN.feedback",
+      "value": "SEL([SET.bistable], [OUT.coil_on] ^ [SET.invert_output], (([OUT.coil_on] ^ [SET.invert_output]) || [FIN.feedback]) && !([OUT.coil_off] ^ [SET.invert_output]))"
+    }
+  ],
+  "aliases": {
+    "is_closed": "is_running",
+    "is_open": "is_off"
+  },
+  "commandInputs": {
+    "rows": [
+      {
+        "name": "HMI",
+        "source": "Hmi",
+        "kind": "Pulse",
+        "drives": "OnOff",
+        "on": 1,
+        "off": 1,
+        "inAuto": "Ignore",
+        "location": "Any",
+        "commands": [
+          "reset"
+        ]
+      }
+    ],
+    "level": false
+  }
+}

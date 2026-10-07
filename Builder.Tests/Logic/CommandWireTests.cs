@@ -8,7 +8,7 @@ namespace Builder.Tests.Logic;
 
 public sealed class CommandWireTests : IDisposable
 {
-    private static readonly CmLibrary Library = CmLibrary.LoadDirectory(Path.Combine(AppContext.BaseDirectory, "cm-types"));
+    private static readonly CmLibrary Library = Fixtures.Library();
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), $"builder-wires-{Guid.NewGuid():N}");
 
@@ -22,8 +22,8 @@ public sealed class CommandWireTests : IDisposable
     {
         var project = new Project();
         var pms = project.AddFolder("PMS");
-        var breaker = InstanceFactory.Create(project, Library, "CircuitBreaker", "CB", pms.Id);
-        var button = InstanceFactory.Create(project, Library, "PushButton", "BTN", pms.Id);
+        var breaker = InstanceFactory.Create(project, Library, Fixtures.CircuitBreaker, "CB", pms.Id);
+        var button = InstanceFactory.Create(project, Library, Fixtures.PushButton, "BTN", pms.Id);
         return (project, breaker, new TagRegistry(project).FindByPath("PMS.BTN.INT.pressed")!);
     }
 

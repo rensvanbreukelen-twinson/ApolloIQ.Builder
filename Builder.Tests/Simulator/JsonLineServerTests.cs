@@ -12,7 +12,7 @@ namespace Builder.Tests.Simulator;
 
 public sealed class JsonLineServerTests : IAsyncLifetime
 {
-    private static readonly CmLibrary Library = CmLibrary.LoadDirectory(Path.Combine(AppContext.BaseDirectory, "cm-types"));
+    private static readonly CmLibrary Library = Fixtures.Library();
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -24,7 +24,7 @@ public sealed class JsonLineServerTests : IAsyncLifetime
     public ValueTask InitializeAsync()
     {
         _project = new Project();
-        InstanceFactory.Create(_project, Library, "CircuitBreaker", "GEN1_CB", _project.AddFolder("PMS").Id);
+        InstanceFactory.Create(_project, Library, Fixtures.CircuitBreaker, "GEN1_CB", _project.AddFolder("PMS").Id);
         _session = new SimulationSession(Guid.NewGuid(), _project, Library);
         _served = _session;
         _server = new JsonLineServer(() => _served, IPAddress.Loopback, 0);
@@ -64,13 +64,13 @@ public sealed class JsonLineServerTests : IAsyncLifetime
         Assert.True(state.GetProperty("ok").GetBoolean());
         Assert.Equal(200, state.GetProperty("value").GetInt32());
 
-        var written = await Send(reader, writer, new { Action = "write", Address = "PMS.GEN1_CB.CMD.set_on", Value = true });
+        var written = await Send(reader, writer, new { Action = "write", Address = "PMS.GEN1_CB.CMD.HMI_on", Value = true });
         Assert.True(written.GetProperty("ok").GetBoolean());
         _session.Step(2);
 
         var closed = await Send(reader, writer, new { Action = "read", Address = "PMS.GEN1_CB.STS.state" });
         Assert.Equal(400, closed.GetProperty("value").GetInt32());
-        var command = await Send(reader, writer, new { Action = "read", Address = "PMS.GEN1_CB.CMD.set_on" });
+        var command = await Send(reader, writer, new { Action = "read", Address = "PMS.GEN1_CB.CMD.HMI_on" });
         Assert.False(command.GetProperty("value").GetBoolean());
     }
 

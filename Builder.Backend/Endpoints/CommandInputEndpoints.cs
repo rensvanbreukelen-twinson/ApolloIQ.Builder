@@ -28,7 +28,7 @@ public static class CommandInputEndpoints
             workspace.Get(projectId).Change(p =>
             {
                 var cm = p.Get(id);
-                var defaults = library.Find(UnitSupport.TypeOf(cm))?.DefaultCommandInputs ?? CommandInputConfig.Empty;
+                var defaults = library.Find(InstanceFactory.BlueprintIdOf(cm))?.DefaultCommandInputs ?? CommandInputConfig.Empty;
                 CommandInputBehaviour.Configure(p, library, id, defaults);
                 if (p.UnitOf(id) is { } parent)
                     CommandInputBehaviour.SetUnitRow(p, library, id, member: true, parent.RowName);
@@ -39,7 +39,7 @@ public static class CommandInputEndpoints
     private static CommandInputsDto Dto(Project project, CmLibrary library, Guid id)
     {
         var cm = project.Get(id);
-        var type = library.Find(UnitSupport.TypeOf(cm));
+        var type = library.Find(InstanceFactory.BlueprintIdOf(cm));
         var tags = project.GetChildren(cm.Id).OfType<Tag>().ToList();
         var hasPair = tags.Any(t => t.Group == TagGroup.Cmd && t.Name == "set_on") && tags.Any(t => t.Group == TagGroup.Cmd && t.Name == "set_off");
         var config = CommandInputBehaviour.InputsOf(cm) ?? CommandInputConfig.Empty;

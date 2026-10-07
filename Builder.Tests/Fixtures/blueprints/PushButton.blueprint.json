@@ -1,0 +1,98 @@
+{
+  "schema": "apolloiq.blueprint/1",
+  "id": "0b1e0000-0000-4000-8000-000000000002",
+  "kind": "CM",
+  "name": "PushButton",
+  "version": "0.1.0",
+  "description": "Hardwired push button or switch, used as a command source (wire it to a CM with On, Off, Toggle or Maintained)",
+  "interfaces": [
+    "Base",
+    "Resettable"
+  ],
+  "tags": [
+    {
+      "id": "b964063b-b1fa-52b4-94bf-c8bd4c65fcd7",
+      "group": "FIN",
+      "name": "pressed",
+      "dataType": "Bool",
+      "description": "Contact closed",
+      "source": "LocalIO",
+      "primary": true
+    },
+    {
+      "id": "f31af91a-abfd-50ba-b337-506df5213f50",
+      "group": "INT",
+      "name": "pressed",
+      "dataType": "Bool",
+      "description": "Conditioned contact"
+    },
+    {
+      "id": "b472314d-6bf7-5b7a-999d-0e9b91b70ef0",
+      "group": "PAR",
+      "name": "button_stick_time",
+      "dataType": "Int",
+      "description": "Watchdog timer for button stick",
+      "unit": "s",
+      "initial": "30"
+    }
+  ],
+  "states": [
+    {
+      "name": "Released",
+      "category": 200,
+      "initial": true
+    },
+    {
+      "name": "Pressed",
+      "category": 400,
+      "timeout": {
+        "time": "10",
+        "goTo": "Fault",
+        "alarm": "Button_Stick",
+        "alarmId": "2f787a62-a814-5225-9c24-5641b38aa234",
+        "priority": 20
+      }
+    },
+    {
+      "name": "Fault",
+      "category": 500
+    }
+  ],
+  "transitions": [
+    {
+      "name": "pressed",
+      "from": [
+        "Released"
+      ],
+      "to": "Pressed",
+      "guard": "[INT.pressed]",
+      "priority": 1
+    },
+    {
+      "name": "released",
+      "from": [
+        "Pressed"
+      ],
+      "to": "Released",
+      "guard": "![INT.pressed]",
+      "priority": 1
+    },
+    {
+      "name": "fault",
+      "from": [
+        "Fault"
+      ],
+      "to": "Released",
+      "guard": "TRUE",
+      "priority": 10
+    }
+  ],
+  "always": [
+    {
+      "tag": "STS.remote_ok",
+      "value": "FALSE"
+    }
+  ],
+  "alarms": [],
+  "plant": []
+}

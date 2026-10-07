@@ -4,12 +4,11 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Builder.Core.Model;
 using Builder.Core.Tags;
-using Builder.Persistence.Export;
 using Builder.Persistence.Files;
 
 namespace Builder.Persistence;
 
-public sealed record LoadedProject(Guid Id, string Name, Project Project, HmiExportProfile? HmiExport = null);
+public sealed record LoadedProject(Guid Id, string Name, Project Project);
 
 public static class ProjectStore
 {
@@ -39,20 +38,14 @@ public static class ProjectStore
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public static void Save(string directory, Guid projectId, string projectName, Project project, HmiExportProfile? hmiExport = null)
+    public static void Save(string directory, Guid projectId, string projectName, Project project)
     {
         Directory.CreateDirectory(directory);
         WriteIfChanged(Path.Combine(directory, ProjectFileName), new ProjectFile
         {
             Id = projectId,
             Name = projectName,
-            MaxNameLength = project.Settings.MaxNameLength,
-            HmiExport = hmiExport is null ? null : new HmiExportFile
-            {
-                ConnectionId = hmiExport.ConnectionId,
-                ScanRateMs = hmiExport.ScanRateMs,
-                Address = hmiExport.Address.ToString()
-            }
+            MaxNameLength = project.Settings.MaxNameLength
         });
 
         var folders = project.Objects.OfType<Folder>().ToDictionary(f => FileName(f.Id), f => (object)new FolderFile
@@ -75,7 +68,7 @@ public static class ProjectStore
             Id = u.Id,
             Name = u.Name,
             ParentId = u.ParentId,
-            Blueprint = u.BlueprintName,
+            BlueprintId = u.BlueprintId,
             BlueprintVersion = u.BlueprintVersion,
             EquipmentModule = u.IsEquipmentModule,
             Members = new SortedDictionary<string, Guid>(u.RoleMembers.ToDictionary(m => m.Key, m => m.Value), StringComparer.Ordinal),
@@ -153,7 +146,7 @@ public static class ProjectStore
         {
             Guard(file, errors, () =>
             {
-                var unit = project.AddUnit(data.Name, data.ParentId, data.Blueprint, data.BlueprintVersion, data.Id, data.EquipmentModule);
+                var unit = project.AddUnit(data.Name, data.ParentId, data.BlueprintId, data.BlueprintVersion, data.Id, data.EquipmentModule);
                 foreach (var tag in data.Tags)
                     AddTag(project, unit.Id, tag, file);
                 if (data.CommandInputs is { } inputs)
@@ -165,14 +158,11 @@ public static class ProjectStore
         {
             Guard(file, errors, () =>
             {
-                var cm = project.AddControlModule(data.Name, data.ParentId, data.Type, data.TypeVersion, data.Id, data.OptionalTags);
-                if (data.Pic is { } pic)
-                    project.SetPic(cm.Id, new PicConfiguration(pic.OnLabel, pic.OffLabel, pic.Rows.Select(r => new PicRow(r.Name,
-                        Parse<PicSource>(r.Source, "source"), Parse<PicInputKind>(r.Kind, "kind"), r.On, r.Off, Parse<PicInAuto>(r.InAuto, "in auto"))).ToList()));
+                var cm = project.AddControlModule(data.Name, data.ParentId, data.BlueprintId, data.BlueprintVersion, data.Id);
                 if (data.CommandInputs is { } inputs)
                     project.SetCommandInputs(cm.Id, inputs);
-                foreach (var (alarm, severity) in data.AlarmSeverity ?? [])
-                    project.SetAlarmSeverity(cm.Id, alarm, severity);
+                foreach (var (alarm, priority) in data.AlarmPriority ?? [])
+                    project.SetAlarmPriority(cm.Id, alarm, priority);
                 foreach (var tag in data.Tags)
                     AddTag(project, cm.Id, tag, file);
                 if (data.ExecutionDeviceId is { } device)
@@ -203,18 +193,9 @@ public static class ProjectStore
                         w.Command))));
         }
 
-        HmiExportProfile? hmiExport = null;
-        if (header.HmiExport is { } export)
-        {
-            if (Enum.TryParse<HmiAddressMode>(export.Address, ignoreCase: true, out var address) && Enum.IsDefined(address))
-                hmiExport = new HmiExportProfile(export.ConnectionId, export.ScanRateMs, address);
-            else
-                errors.Add($"{ProjectFileName}: unknown HMI address mode '{export.Address}'.");
-        }
-
         if (errors.Count > 0)
             throw new ProjectLoadException(errors);
-        return new LoadedProject(header.Id, header.Name, project, hmiExport);
+        return new LoadedProject(header.Id, header.Name, project);
     }
 
     private static ControlModuleFile ToFile(Project project, ControlModule cm) => new()
@@ -222,27 +203,15 @@ public static class ProjectStore
         Id = cm.Id,
         Name = cm.Name,
         ParentId = cm.ParentId,
-        Type = cm.TypeName,
-        TypeVersion = cm.TypeVersion,
-        OptionalTags = cm.OptionalTags.ToList(),
+        BlueprintId = cm.BlueprintId,
+        BlueprintVersion = cm.BlueprintVersion,
         Interlocks = InterlockEntry.From(cm.Interlocks),
-        AlarmSeverity = cm.AlarmSeverities.Count == 0
+        AlarmPriority = cm.AlarmPriorities.Count == 0
             ? null
-            : new SortedDictionary<string, int>(cm.AlarmSeverities.ToDictionary(a => a.Key, a => a.Value), StringComparer.Ordinal),
+            : new SortedDictionary<string, int>(cm.AlarmPriorities.ToDictionary(a => a.Key, a => a.Value), StringComparer.Ordinal),
         Wires = cm.CommandWires.Count == 0
             ? null
             : cm.CommandWires.Select(w => new WireEntry { Source = w.SourceTagId, Mode = w.Mode.ToString(), Command = w.Command }).ToList(),
-        Pic = cm.Pic is not { } pic
-            ? null
-            : new PicEntry
-            {
-                OnLabel = pic.OnLabel,
-                OffLabel = pic.OffLabel,
-                Rows = pic.Rows.Select(r => new PicRowEntry
-                {
-                    Name = r.Name, Source = r.Source.ToString(), Kind = r.Kind.ToString(), On = r.On, Off = r.Off, InAuto = r.InAuto.ToString()
-                }).ToList()
-            },
         ExecutionDeviceId = cm.ExecutionDeviceId,
         CommandInputs = cm.CommandInputs,
         Tags = TagEntries(project, cm.Id)
@@ -296,11 +265,6 @@ public static class ProjectStore
         Enum.TryParse<T>(text, ignoreCase: true, out var value) && Enum.IsDefined(value)
             ? value
             : throw new ProjectException(ProjectErrors.InvalidTopology, $"Unknown {what} '{text}'.");
-
-    private static T Parse<T>(string text, string what) where T : struct, Enum =>
-        Enum.TryParse<T>(text, ignoreCase: true, out var value) && Enum.IsDefined(value)
-            ? value
-            : throw new ProjectException(ProjectErrors.InvalidPic, $"Unknown PIC {what} '{text}'.");
 
     private static T ParseEnum<T>(string text, TagEntry tag, string what) where T : struct, Enum =>
         Enum.TryParse<T>(text, ignoreCase: true, out var value) && Enum.IsDefined(value)

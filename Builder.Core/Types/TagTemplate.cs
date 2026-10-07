@@ -10,13 +10,13 @@ public sealed record TagTemplate(
     TagDirection Direction,
     TagKind Kind,
     TagSource Source,
-    bool Optional,
     JsonNode? InitialValue,
     string? EnumType,
     string? Unit,
-    string Description,
-    JsonNode? AbsentValue = null)
+    string Description)
 {
+    public string Key => $"{Group.Code()}.{Name}";
+
     public TagDefinition ToDefinition() =>
         new(Name, Group, DataType, Direction, Kind, InitialValue?.DeepClone(), EnumType, Description, Unit);
 }

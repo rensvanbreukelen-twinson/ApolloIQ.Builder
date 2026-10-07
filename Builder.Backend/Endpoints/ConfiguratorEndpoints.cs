@@ -8,12 +8,12 @@ namespace Builder.Backend.Endpoints;
 
 public sealed record PositionDto(double X, double Y);
 
-public sealed record ConfiguratorCmDto(Guid Id, string Name, string Path, string Blueprint, string Description, PositionDto? Position,
+public sealed record ConfiguratorCmDto(Guid Id, string Name, string Path, Guid BlueprintId, string Blueprint, string Description, PositionDto? Position,
     Guid? UnitId, string? Role, InterlockSummaryDto Interlocks, IReadOnlyList<string> Inputs);
 
-public sealed record UnitRoleDto(string Role, string Blueprint, Guid? ControlModuleId);
+public sealed record UnitRoleDto(string Role, Guid BlueprintId, string Blueprint, Guid? ControlModuleId);
 
-public sealed record ConfiguratorUnitDto(Guid Id, string Name, string Path, string Blueprint, string Description, PositionDto? Position,
+public sealed record ConfiguratorUnitDto(Guid Id, string Name, string Path, Guid BlueprintId, string Blueprint, string Description, PositionDto? Position,
     IReadOnlyList<UnitRoleDto> Roles, string? Problem, bool EquipmentModule = false, Guid? UnitId = null, string? Role = null,
     InterlockSummaryDto? Interlocks = null);
 
@@ -25,7 +25,7 @@ public sealed record ConfiguratorDto(Guid? FolderId, string FolderPath, IReadOnl
 /// <summary>How many interlocks the object defines and how many act on it (G-172).</summary>
 public sealed record InterlockSummaryDto(bool HasInterlocks, int Defined, int SwitchOn, int SwitchOff, int Trips);
 
-public sealed record CreateUnitRequest(string Name, Guid? ParentId, string Blueprint);
+public sealed record CreateUnitRequest(string Name, Guid? ParentId, Guid BlueprintId);
 
 public sealed record UnitMemberRequest(Guid? ControlModuleId);
 
@@ -44,13 +44,13 @@ public static class ConfiguratorEndpoints
 
         project.MapPost("/units", (Guid projectId, CreateUnitRequest request, ProjectWorkspace workspace, BlueprintStore blueprints, CmLibrary library) =>
         {
-            var blueprint = blueprints.Find(request.Blueprint ?? "");
-            if (blueprint is null || blueprint.Kind == BlueprintKind.CM)
-                throw new ProjectException(ProjectErrors.InvalidUnit, $"'{request.Blueprint}' is not a Unit or Equipment module blueprint.", "blueprint");
+            var blueprint = blueprints.Find(request.BlueprintId);
+            if (blueprint is null || blueprint.Kind == ApolloIQ.Core.Blueprints.BlueprintKind.CM)
+                throw new ProjectException(ProjectErrors.InvalidUnit, $"Blueprint {request.BlueprintId} is not a Unit or Equipment module blueprint.", "blueprint");
             var node = workspace.Get(projectId).Change(p =>
             {
                 var unit = UnitSupport.Create(p, blueprint, request.Name ?? "", request.ParentId, library, blueprints);
-                return Mapping.Node(p, unit);
+                return Mapping.Node(p, library, unit);
             });
             return Results.Created($"/api/projects/{projectId}/units/{node.Id}", node);
         });
@@ -94,18 +94,20 @@ public static class ConfiguratorEndpoints
         var cms = children.OfType<ControlModule>().OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).Select(cm =>
         {
             var unit = project.UnitOf(cm.Id);
-            return new ConfiguratorCmDto(cm.Id, cm.Name, project.GetPath(cm.Id), cm.TypeName, library.Find(cm.TypeName)?.Description ?? "",
+            var type = library.Find(cm.BlueprintId);
+            return new ConfiguratorCmDto(cm.Id, cm.Name, project.GetPath(cm.Id), cm.BlueprintId, type?.Name ?? "(missing blueprint)", type?.Description ?? "",
                 Position(cm.Id), unit?.Id, unit?.RoleMembers.First(m => m.Value == cm.Id).Key, Summary(project, library, cm),
                 (cm.CommandInputs?.Rows ?? []).Select(r => r.Name).ToList());
         }).ToList();
 
         var units = children.OfType<UnitInstance>().OrderBy(u => u.Name, StringComparer.OrdinalIgnoreCase).Select(u =>
         {
-            var blueprint = blueprints.Find(u.BlueprintName);
-            var roles = (blueprint?.Roles ?? []).Select(r => new UnitRoleDto(r.Name, r.Blueprint, u.RoleMembers.TryGetValue(r.Name, out var cm) ? cm : null)).ToList();
+            var blueprint = blueprints.Find(u.BlueprintId);
+            var roles = (blueprint?.Roles ?? []).Select(r => new UnitRoleDto(r.Name, r.BlueprintId, blueprints.Find(r.BlueprintId)?.Name ?? "(missing blueprint)",
+                u.RoleMembers.TryGetValue(r.Name, out var cm) ? cm : null)).ToList();
             var parent = project.UnitOf(u.Id);
-            return new ConfiguratorUnitDto(u.Id, u.Name, project.GetPath(u.Id), u.BlueprintName, blueprint?.Description ?? "", Position(u.Id), roles,
-                blueprint is null ? $"Blueprint {u.BlueprintName} does not exist." : null, u.IsEquipmentModule, parent?.Id,
+            return new ConfiguratorUnitDto(u.Id, u.Name, project.GetPath(u.Id), u.BlueprintId, blueprint?.Name ?? "(missing blueprint)", blueprint?.Description ?? "", Position(u.Id), roles,
+                blueprint is null ? $"Blueprint {u.BlueprintId} does not exist." : null, u.IsEquipmentModule, parent?.Id,
                 parent?.RoleMembers.First(m => m.Value == u.Id).Key, Summary(project, library, u));
         }).ToList();
 

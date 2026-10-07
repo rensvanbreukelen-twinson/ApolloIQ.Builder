@@ -1,3 +1,4 @@
+using ApolloIQ.Core.Versioning;
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
@@ -7,7 +8,7 @@ namespace Builder.Tests.Types;
 
 public class InstanceFactoryTests
 {
-    private static readonly CmLibrary Library = CmLibrary.LoadDirectory(Path.Combine(AppContext.BaseDirectory, "cm-types"));
+    private static readonly CmLibrary Library = Fixtures.Library();
 
     private static (Project project, Folder pms) NewProject()
     {
@@ -15,67 +16,77 @@ public class InstanceFactoryTests
         return (project, project.AddFolder("PMS"));
     }
 
+    private static int TagCount(Guid blueprint)
+    {
+        var type = Library.Find(blueprint)!;
+        return type.ExpandTags().Count + (type.DefaultCommandInputs is { } inputs ? CommandInputBehaviour.Tags(inputs).Count : 0);
+    }
+
     [Fact]
-    public void CreatesAControlModuleWithAllTagsOfTheType()
+    public void CreatesAControlModuleWithAllTagsOfTheBlueprint()
     {
         var (project, pms) = NewProject();
-        var gen1 = InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id);
+        var gen1 = InstanceFactory.Create(project, Library, Fixtures.Light, "GEN1", pms.Id);
 
-        var expected = Library.Find("GenSet")!.ExpandTags().Count;
         var tags = new TagRegistry(project).ForControlModule(gen1.Id).ToList();
-        Assert.Equal(expected, tags.Count);
-        Assert.Equal("GenSet", gen1.TypeName);
-        Assert.Equal("1.3.0", gen1.TypeVersion);
+        Assert.Equal(TagCount(Fixtures.Light), tags.Count);
+        Assert.Equal(Fixtures.Light, gen1.BlueprintId);
+        Assert.Equal(BlueprintVersion.Initial, gen1.BlueprintVersion);
         Assert.NotNull(new TagRegistry(project).FindByPath("PMS.GEN1.STS.state"));
-        Assert.NotNull(new TagRegistry(project).FindByPath("PMS.GEN1.PAR.cooldown_time"));
+        Assert.NotNull(new TagRegistry(project).FindByPath("PMS.GEN1.PAR.max_switch_time"));
+        Assert.NotNull(new TagRegistry(project).FindByPath("PMS.GEN1.CMD.HMI_on"));
     }
 
     [Fact]
     public void TagsCarryTheirTemplateDetails()
     {
         var (project, pms) = NewProject();
-        InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id);
-        var tag = new TagRegistry(project).FindByPath("PMS.GEN1.PAR.cooldown_time")!;
+        InstanceFactory.Create(project, Library, Fixtures.Light, "GEN1", pms.Id);
+        var tag = new TagRegistry(project).FindByPath("PMS.GEN1.PAR.max_switch_time")!;
         Assert.Equal(TagDataType.Real, tag.DataType);
         Assert.Equal(TagDirection.InOut, tag.Direction);
         Assert.Equal("s", tag.Unit);
-        Assert.Equal(180, tag.InitialValue!.GetValue<int>());
+        Assert.Equal(2, tag.InitialValue!.GetValue<double>());
     }
 
     [Fact]
-    public void OptionalTagsAreOnlyCreatedWhenSelected()
+    public void OnlyPlcReactiveAlarmsGetAlarmTags()
     {
         var (project, pms) = NewProject();
-        var gen1 = InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id, ["fin.exhaust_temp"]);
+        InstanceFactory.Create(project, Library, Fixtures.Light, "L1", pms.Id);
         var registry = new TagRegistry(project);
-        Assert.NotNull(registry.FindByPath("PMS.GEN1.FIN.exhaust_temp"));
-        Assert.Null(registry.FindByPath("PMS.GEN1.CMD.set_auto"));
-        Assert.Equal(["FIN.exhaust_temp"], gen1.OptionalTags);
+        Assert.NotNull(registry.FindByPath("PMS.L1.ALM.CurrentWhileOff.active"));
+        Assert.NotNull(registry.FindByPath("PMS.L1.ALM.DoesNotSwitchOn.raise_count"));
+        Assert.Null(registry.FindByPath("PMS.L1.ALM.LampFailure.active"));
+        Assert.Null(registry.FindByPath("PMS.L1.ALM.Overcurrent.active"));
     }
 
     [Fact]
-    public void UnknownOptionalTagIsRejected()
+    public void UnknownBlueprintIsRejected()
     {
         var (project, pms) = NewProject();
-        Assert.Throws<ProjectException>(() => InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id, ["FIN.running"]));
-        Assert.Empty(project.GetChildren(pms.Id));
-    }
-
-    [Fact]
-    public void UnknownTypeIsRejected()
-    {
-        var (project, pms) = NewProject();
-        var ex = Assert.Throws<ProjectException>(() => InstanceFactory.Create(project, Library, "Pump", "P1", pms.Id));
+        var ex = Assert.Throws<ProjectException>(() => InstanceFactory.Create(project, Library, Guid.NewGuid(), "P1", pms.Id));
         Assert.Equal(ProjectErrors.NotFound, ex.Code);
+    }
+
+    [Fact]
+    public void UnitBlueprintsAreAddedAsUnits()
+    {
+        var (project, pms) = NewProject();
+        Assert.Equal(ProjectErrors.InvalidUnit, Assert.Throws<ProjectException>(() => InstanceFactory.Create(project, Library, Fixtures.Plant, "P1", pms.Id)).Code);
+        Assert.Equal(ProjectErrors.InvalidUnit, Assert.Throws<ProjectException>(() => InstanceFactory.CreateUnit(project, Library, Fixtures.Light, "P1", pms.Id)).Code);
+        var unit = InstanceFactory.CreateUnit(project, Library, Fixtures.Plant, "P1", pms.Id);
+        Assert.Equal(Fixtures.Plant, unit.BlueprintId);
+        Assert.NotNull(new TagRegistry(project).FindByPath("PMS.P1.ALM.ManualByOverride.active"));
     }
 
     [Fact]
     public void DuplicateNameIsRejectedBeforeAnythingIsCreated()
     {
         var (project, pms) = NewProject();
-        InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id);
+        InstanceFactory.Create(project, Library, Fixtures.Light, "GEN1", pms.Id);
         var before = project.Objects.Count();
-        Assert.Throws<ProjectException>(() => InstanceFactory.Create(project, Library, "CircuitBreaker", "gen1", pms.Id));
+        Assert.Throws<ProjectException>(() => InstanceFactory.Create(project, Library, Fixtures.CircuitBreaker, "gen1", pms.Id));
         Assert.Equal(before, project.Objects.Count());
     }
 
@@ -83,8 +94,8 @@ public class InstanceFactoryTests
     public void EveryTagGetsANewId()
     {
         var (project, pms) = NewProject();
-        var a = InstanceFactory.Create(project, Library, "CircuitBreaker", "GEN1_CB", pms.Id);
-        var b = InstanceFactory.Create(project, Library, "CircuitBreaker", "GEN2_CB", pms.Id);
+        var a = InstanceFactory.Create(project, Library, Fixtures.CircuitBreaker, "GEN1_CB", pms.Id);
+        var b = InstanceFactory.Create(project, Library, Fixtures.CircuitBreaker, "GEN2_CB", pms.Id);
         var registry = new TagRegistry(project);
         var idsA = registry.ForControlModule(a.Id).Select(t => t.Id).ToHashSet();
         Assert.DoesNotContain(registry.ForControlModule(b.Id), t => idsA.Contains(t.Id));
@@ -95,7 +106,7 @@ public class InstanceFactoryTests
     {
         var (project, pms) = NewProject();
         var aux = project.AddFolder("AUX");
-        var gen1 = InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id);
+        var gen1 = InstanceFactory.Create(project, Library, Fixtures.Light, "GEN1", pms.Id);
         var registry = new TagRegistry(project);
         var before = registry.ForControlModule(gen1.Id).ToDictionary(t => t.Name + t.Group, t => (t.Id, t.SymbolKey));
 
@@ -111,12 +122,11 @@ public class InstanceFactoryTests
     public void DeletionSummaryCountsWhatWillBeRemoved()
     {
         var (project, pms) = NewProject();
-        InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id);
-        InstanceFactory.Create(project, Library, "CircuitBreaker", "GEN1_CB", pms.Id);
-        var expectedTags = Library.Find("GenSet")!.ExpandTags().Count + Library.Find("CircuitBreaker")!.ExpandTags().Count;
+        InstanceFactory.Create(project, Library, Fixtures.Light, "GEN1", pms.Id);
+        InstanceFactory.Create(project, Library, Fixtures.CircuitBreaker, "GEN1_CB", pms.Id);
 
         var summary = InstanceFactory.Summarize(project, pms.Id);
-        Assert.Equal(new DeletionSummary(1, 2, expectedTags), summary);
+        Assert.Equal(new DeletionSummary(1, 2, TagCount(Fixtures.Light) + TagCount(Fixtures.CircuitBreaker)), summary);
 
         project.Delete(pms.Id);
         Assert.Empty(project.Objects);

@@ -1,3 +1,5 @@
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Versioning;
 using Builder.Core.Tags;
 using Builder.Core.Types;
 
@@ -45,19 +47,18 @@ public sealed class Project
         return Insert(new Folder(id ?? _newId(), name, parentId));
     }
 
-    public ControlModule AddControlModule(string name, Guid? parentId, string typeName, string typeVersion, Guid? id = null,
-        IEnumerable<string>? optionalTags = null)
+    public ControlModule AddControlModule(string name, Guid? parentId, Guid blueprintId, BlueprintVersion blueprintVersion, Guid? id = null)
     {
         CheckName(name);
         CheckParent(ObjectKind.ControlModule, parentId);
-        return Insert(new ControlModule(id ?? _newId(), name, parentId, typeName, typeVersion, optionalTags));
+        return Insert(new ControlModule(id ?? _newId(), name, parentId, blueprintId, blueprintVersion));
     }
 
-    public UnitInstance AddUnit(string name, Guid? parentId, string blueprintName, string blueprintVersion, Guid? id = null, bool equipmentModule = false)
+    public UnitInstance AddUnit(string name, Guid? parentId, Guid blueprintId, BlueprintVersion blueprintVersion, Guid? id = null, bool equipmentModule = false)
     {
         CheckName(name);
         CheckParent(ObjectKind.Unit, parentId, equipmentModule);
-        return Insert(new UnitInstance(id ?? _newId(), name, parentId, blueprintName, blueprintVersion, equipmentModule));
+        return Insert(new UnitInstance(id ?? _newId(), name, parentId, blueprintId, blueprintVersion, equipmentModule));
     }
 
     public void SetUnitMember(Guid unitId, string role, Guid? memberId)
@@ -160,8 +161,10 @@ public sealed class Project
             rule.Target = "";
             if (rule.Kind != InterlockKind.Trip)
                 continue;
-            if (!SeverityBands.IsValid(rule.Severity))
-                throw new ProjectException(ProjectErrors.InvalidSeverity, SeverityBands.RangeText, $"{field}.severity");
+            if (!AlarmPriority.IsValid(rule.Priority))
+                throw new ProjectException(ProjectErrors.InvalidPriority, AlarmPriority.RangeText, $"{field}.priority");
+            if (rule.AlarmId is null || rule.AlarmId == Guid.Empty)
+                rule.AlarmId = current.FirstOrDefault(r => r.Kind == InterlockKind.Trip && string.Equals(r.Alarm, rule.Alarm, StringComparison.OrdinalIgnoreCase))?.AlarmId ?? _newId();
             if (NameRules.Check(rule.Alarm!, ProjectSettings.TagNameMaxLength - 12) is { } error)
                 throw new ProjectException(ProjectErrors.InvalidName, $"Interlock {i + 1}: {error}", $"{field}.alarm");
             if (!names.Add(rule.Alarm!) || (!adoptTags && !oldTrips.Contains(rule.Alarm!) && tags.Any(tag => tag.Group == TagGroup.Alm && tag.Name.StartsWith($"{rule.Alarm}.", StringComparison.OrdinalIgnoreCase))))
@@ -175,7 +178,7 @@ public sealed class Project
         foreach (var tag in tags.Where(t => t.Group == TagGroup.Alm && oldTrips.Any(a => t.Name.StartsWith($"{a}.", StringComparison.OrdinalIgnoreCase)) && !names.Any(a => t.Name.StartsWith($"{a}.", StringComparison.OrdinalIgnoreCase))))
             Delete(tag.Id);
         foreach (var rule in list.Where(r => r.Kind == InterlockKind.Trip))
-            foreach (var template in BaseBehaviour.AlarmTags(InterlockRule.TripAlarm(rule, rule.Alarm!)))
+            foreach (var template in BaseBehaviour.AlarmTags(rule.Alarm!))
                 if (!tags.Any(t => t.Group == TagGroup.Alm && string.Equals(t.Name, template.Name, StringComparison.OrdinalIgnoreCase)))
                     AddTag(ownerId, template.ToDefinition());
         current.Clear();
@@ -268,23 +271,18 @@ public sealed class Project
         Revision++;
     }
 
-    public void SetPic(Guid controlModuleId, PicConfiguration? configuration)
-    {
-        Get<ControlModule>(controlModuleId).Pic = configuration;
-        Revision++;
-    }
-
-    public void SetAlarmSeverity(Guid controlModuleId, string alarm, int? severity)
+    /// <summary>Overrides the priority of one blueprint alarm on this CM (null = the blueprint's).</summary>
+    public void SetAlarmPriority(Guid controlModuleId, string alarm, int? priority)
     {
         var cm = Get<ControlModule>(controlModuleId);
-        if (severity is { } value)
+        if (priority is { } value)
         {
-            if (!SeverityBands.IsValid(value))
-                throw new ProjectException(ProjectErrors.InvalidSeverity, SeverityBands.RangeText, "severity");
-            cm.Severities[alarm] = value;
+            if (!AlarmPriority.IsValid(value))
+                throw new ProjectException(ProjectErrors.InvalidPriority, AlarmPriority.RangeText, "priority");
+            cm.Priorities[alarm] = value;
         }
         else
-            cm.Severities.Remove(alarm);
+            cm.Priorities.Remove(alarm);
         Revision++;
     }
 
@@ -453,8 +451,7 @@ public sealed class Project
             throw new ProjectException(ProjectErrors.DuplicateName, $"The name '{obj.Name}' is already used here.");
     }
 
-    private static bool ReservedInContainer(string name) =>
-        name.ToUpperInvariant() is "FIN" or "CMD" or "OUT" or "LOK" or "PAR" or "SET" or "PMT" or "STS" or "INT" or "ALM";
+    private static bool ReservedInContainer(string name) => ApolloIQ.Core.Blueprints.BlueprintCatalog.ReservedNames.Contains(name);
 
     private void CheckParent(ObjectKind kind, Guid? parentId, bool equipmentModule = false)
     {

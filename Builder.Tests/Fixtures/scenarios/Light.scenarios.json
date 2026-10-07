@@ -1,0 +1,465 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "Light",
+  "scenarios": [
+    {
+      "name": "The board button toggles the light",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "expect": "[STS.state] == Off"
+        },
+        {
+          "force": {
+            "FIN.BOARD": true
+          }
+        },
+        {
+          "until": "[STS.state] == On",
+          "within": "0.5 s"
+        },
+        {
+          "expect": "[STS.active_input] == 2"
+        },
+        {
+          "force": {
+            "FIN.BOARD": false
+          }
+        },
+        {
+          "run": 3
+        },
+        {
+          "expect": "[STS.state] == On"
+        },
+        {
+          "force": {
+            "FIN.BOARD": true
+          }
+        },
+        {
+          "until": "[STS.state] == Off",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "The HMI writes its own command tags",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "[STS.state] == On",
+          "within": "0.5 s"
+        },
+        {
+          "expect": [
+            "[STS.active_input] == 1",
+            "![CMD.HMI_on]"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "[STS.state] == Off",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Debounce ignores a short bounce",
+      "instances": [
+        {
+          "name": "CM",
+          "commandInputs": {
+            "rows": [
+              {
+                "name": "BOARD",
+                "source": "DigitalInput",
+                "kind": "Button",
+                "drives": "Toggle",
+                "on": 1,
+                "off": 1,
+                "debounce": 0.2
+              }
+            ]
+          }
+        }
+      ],
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.BOARD": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.BOARD": false
+          }
+        },
+        {
+          "run": 6
+        },
+        {
+          "expect": "[STS.state] == Off"
+        },
+        {
+          "force": {
+            "FIN.BOARD": true
+          }
+        },
+        {
+          "until": "[STS.state] == On",
+          "within": "0.6 s"
+        }
+      ]
+    },
+    {
+      "name": "The wheelhouse wins and the loser must press again",
+      "instances": [
+        {
+          "name": "CM",
+          "commandInputs": {
+            "level": true,
+            "rows": [
+              {
+                "name": "WH",
+                "source": "DigitalInput",
+                "kind": "Button",
+                "drives": "OnOff",
+                "on": 1,
+                "off": 1
+              },
+              {
+                "name": "ECR",
+                "source": "Hmi",
+                "kind": "Hold",
+                "drives": "OnOff",
+                "on": 2,
+                "off": 2
+              }
+            ]
+          }
+        }
+      ],
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.WH_off": true
+          }
+        },
+        {
+          "set": {
+            "CMD.ECR_on": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "[STS.state] == Off",
+            "[STS.active_input] == 1"
+          ]
+        },
+        {
+          "release": "FIN.WH_off"
+        },
+        {
+          "set": {
+            "CMD.ECR_on": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "[STS.state] == Off"
+        },
+        {
+          "run": "0.6 s"
+        },
+        {
+          "set": {
+            "CMD.ECR_on": true
+          }
+        },
+        {
+          "until": "[STS.state] == On",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Open from anywhere beats close from anywhere",
+      "instances": [
+        {
+          "name": "CM",
+          "commandInputs": {
+            "rows": [
+              {
+                "name": "LOCAL",
+                "source": "DigitalInput",
+                "kind": "Button",
+                "drives": "OnOff",
+                "on": 1,
+                "off": 2
+              },
+              {
+                "name": "HMI",
+                "source": "Hmi",
+                "kind": "Pulse",
+                "drives": "OnOff",
+                "on": 1,
+                "off": 2
+              }
+            ]
+          }
+        }
+      ],
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.LOCAL_off": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "[STS.state] == On",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "A stuck button raises an alarm and is ignored until released",
+      "instances": [
+        {
+          "name": "CM",
+          "commandInputs": {
+            "rows": [
+              {
+                "name": "BOARD",
+                "source": "DigitalInput",
+                "kind": "Button",
+                "drives": "Toggle",
+                "on": 1,
+                "off": 1,
+                "stuckTime": 1
+              },
+              {
+                "name": "HMI",
+                "source": "Hmi",
+                "kind": "Pulse",
+                "drives": "OnOff",
+                "on": 1,
+                "off": 1
+              }
+            ]
+          }
+        }
+      ],
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.BOARD": true
+          }
+        },
+        {
+          "run": "1.2 s"
+        },
+        {
+          "expect": [
+            "[ALM.BOARD_stuck.active]",
+            "[STS.state] == On"
+          ]
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "[STS.state] == Off",
+          "within": "0.5 s"
+        },
+        {
+          "release": "FIN.BOARD"
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": [
+            "![ALM.BOARD_stuck.active]",
+            "[STS.state] == Off"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A maintained switch is the only command input",
+      "instances": [
+        {
+          "name": "CM",
+          "commandInputs": {
+            "rows": [
+              {
+                "name": "SW",
+                "source": "DigitalInput",
+                "kind": "Switch",
+                "drives": "OnOff",
+                "on": 1,
+                "off": 1
+              }
+            ]
+          }
+        }
+      ],
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.SW": true
+          }
+        },
+        {
+          "until": "[STS.state] == On",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "FIN.SW": false
+          }
+        },
+        {
+          "until": "[STS.state] == Off",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Reset from the HMI after the lamp broke",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "force": {
+            "FIN.feedback": false
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "[STS.state] == Broken",
+          "within": "3 s"
+        },
+        {
+          "release": "FIN.feedback"
+        },
+        {
+          "set": {
+            "CMD.HMI_reset": true
+          }
+        },
+        {
+          "until": "[STS.state] == Off",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Unavailable while the lamp feedback is bad",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "bad": "FIN.feedback"
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "[STS.state] == Unavailable"
+        },
+        {
+          "good": "FIN.feedback"
+        },
+        {
+          "until": "[STS.state] == Off",
+          "within": "0.5 s"
+        }
+      ]
+    },
+    {
+      "name": "Broken when the lamp does not go out",
+      "steps": [
+        {
+          "run": 2
+        },
+        {
+          "set": {
+            "CMD.HMI_on": true
+          }
+        },
+        {
+          "until": "[STS.state] == On",
+          "within": "0.5 s"
+        },
+        {
+          "force": {
+            "FIN.feedback": true
+          }
+        },
+        {
+          "set": {
+            "CMD.HMI_off": true
+          }
+        },
+        {
+          "until": "[STS.state] == Broken",
+          "within": "3 s"
+        }
+      ]
+    }
+  ]
+}

@@ -28,17 +28,18 @@ public sealed class ApiServer : IAsyncDisposable
 
     public string ProjectsRoot { get; }
 
-    public static async Task<ApiServer> StartAsync(string? projectsRoot = null)
+    /// <summary>Starts the API on a free port. <paramref name="fixtures"/>: the blueprint library starts with a copy of the test fixtures.</summary>
+    public static async Task<ApiServer> StartAsync(string? projectsRoot = null, bool fixtures = true)
     {
         var root = projectsRoot ?? Path.Combine(Path.GetTempPath(), $"builder-api-{Guid.NewGuid():N}");
+        if (fixtures)
+            Fixtures.Store(Path.Combine(root, "blueprints"));
         var app = BuilderApp.Build(["--urls", "http://127.0.0.1:0", "--environment", "Testing"], options =>
         {
             options.ProjectsRoot = root;
-            options.LibraryPath = Path.Combine(AppContext.BaseDirectory, "cm-types");
             options.SimulatorTcpPort = 0;
-            options.ScenarioPath = Path.Combine(AppContext.BaseDirectory, "scenarios");
+            options.ScenarioPath = Fixtures.ScenarioDirectory;
             options.BlueprintPath = Path.Combine(root, "blueprints");
-            options.ExamplePath = Path.Combine(AppContext.BaseDirectory, "examples");
         });
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();

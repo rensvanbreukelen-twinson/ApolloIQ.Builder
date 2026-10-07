@@ -1,7 +1,8 @@
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Expressions;
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
-using Builder.Logic.Expressions;
 using Builder.Logic.Model;
 
 namespace Builder.Logic.Runtime;
@@ -44,7 +45,7 @@ public sealed class LogicProgram
     public static LogicProgram Build(Project project, CmLibrary library, double cycleSeconds = DefaultCycleSeconds)
     {
         var registry = new TagRegistry(project);
-        var memory = CreateMemory(project, library);
+        var memory = CreateMemory(project);
 
         var errors = new List<LogicError>();
         var compiled = new List<CmProgram>();
@@ -52,10 +53,10 @@ public sealed class LogicProgram
         var dependencies = new Dictionary<Guid, HashSet<Guid>>();
         foreach (var cm in project.Objects.OfType<ControlModule>().OrderBy(c => project.GetPath(c.Id), StringComparer.Ordinal))
         {
-            var type = library.Find(cm.TypeName);
+            var type = library.Find(cm.BlueprintId);
             if (type is null)
             {
-                errors.Add(new LogicError(project.GetPath(cm.Id), $"CM type '{cm.TypeName}' is not in the library."));
+                errors.Add(new LogicError(project.GetPath(cm.Id), $"Blueprint {cm.BlueprintId} does not exist or has errors (save it without errors in the Blueprint editor)."));
                 continue;
             }
             var deps = dependencies[cm.Id] = [];
@@ -67,11 +68,11 @@ public sealed class LogicProgram
         var memberOf = new List<(Guid Member, Guid Parent)>();
         foreach (var unit in project.Objects.OfType<UnitInstance>().OrderBy(u => project.GetPath(u.Id), StringComparer.Ordinal))
         {
-            var type = library.Find(unit.BlueprintName);
+            var type = library.Find(unit.BlueprintId);
             var path = project.GetPath(unit.Id);
             if (type is null || !type.IsUnit)
             {
-                errors.Add(new LogicError(path, $"Unit blueprint '{unit.BlueprintName}' is not published (save it without errors in the Blueprint editor)."));
+                errors.Add(new LogicError(path, $"Unit blueprint {unit.BlueprintId} does not exist or has errors (save it without errors in the Blueprint editor)."));
                 continue;
             }
             var members = type.Roles.Keys.ToDictionary(role => role,
@@ -115,16 +116,12 @@ public sealed class LogicProgram
         return program;
     }
 
-    private static TagMemory CreateMemory(Project project, CmLibrary library)
+    private static TagMemory CreateMemory(Project project)
     {
         var memory = new TagMemory();
         foreach (var tag in project.Tags.OrderBy(t => project.GetPath(t.Id), StringComparer.Ordinal))
         {
-            var owner = tag.ParentId is { } p ? project.Find(p) as ControlModule : null;
-            var type = owner is null ? null : library.Find(owner.TypeName);
-            var initial = TagMemory.IsLogicType(tag.DataType)
-                ? InitialValues.From(tag.InitialValue, tag.DataType, tag.EnumType, type)
-                : Value.Of(0d);
+            var initial = TagMemory.IsLogicType(tag.DataType) ? InitialValues.From(tag.InitialValue, tag.DataType) : Value.Of(0d);
             memory.Add(tag.Id, tag.DataType, initial, tag.InitialValue?.ToString());
         }
         return memory;
@@ -134,11 +131,11 @@ public sealed class LogicProgram
     public static string? CheckInterlockCondition(Project project, CmLibrary library, Guid ownerId, string display)
     {
         var registry = new TagRegistry(project);
-        var memory = CreateMemory(project, library);
+        var memory = CreateMemory(project);
         var owner = project.AsControlModule(ownerId);
-        var type = library.Find(owner.TypeName);
+        var type = library.Find(owner.BlueprintId);
         if (type is null)
-            return $"Type '{owner.TypeName}' is not in the library.";
+            return $"Blueprint {owner.BlueprintId} does not exist or has errors.";
         var errors = new List<LogicError>();
         var compiler = new CmCompiler(project, registry, library, memory, owner, type, errors, _ => { }, Members(project, type, owner.Id));
         return compiler.CompileInterlock(display, "condition") is null ? errors.LastOrDefault()?.Message ?? "Invalid condition." : null;
@@ -229,7 +226,7 @@ public sealed class LogicProgram
                 var target = InterlockSources.EscalationTarget(project, program.Id, rule.Escalate);
                 if (target is null || !byId.TryGetValue(target.Id, out var escalated))
                     errors.Add(new LogicError($"{program.Path} {location}", $"The trip escalates to the {rule.Escalate}, but {program.Path} is not in an {rule.Escalate}."));
-                else if (escalated.EscalatedSlot < 0 || escalated.Type.States.All(s => !UniversalStates.IsFault(s.Code) || s.Code == UniversalStates.UnavailableCode))
+                else if (escalated.EscalatedSlot < 0 || escalated.Type.ObjectStates.All(s => !UniversalStates.IsFault(s.Code)))
                     errors.Add(new LogicError($"{program.Path} {location}", $"The trip escalates to {escalated.Path}, which has no fault state (Shutdown) to go to."));
                 else
                     escalated.Escalations.Add(compiled);
@@ -239,9 +236,8 @@ public sealed class LogicProgram
 
     private static IEnumerable<Guid> ReferencedOwners(Project project, TagRegistry registry, string text, string ownerPath)
     {
-        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\[([^\[\]]+)\]"))
+        foreach (var reference in Expression.References(text))
         {
-            var reference = m.Groups[1].Value;
             if (registry.FindByPath(reference) is { ParentId: { } parent })
                 yield return parent;
         }
@@ -277,7 +273,7 @@ public sealed class LogicProgram
                       ?? throw new ExpressionException($"Unknown control module '{controlModulePath}'", 0, expression);
         var cm = _project!.Find(program.Id) switch { ControlModule c => c, UnitInstance u => ControlModule.ForUnit(u), _ => throw new ExpressionException($"Unknown control module '{controlModulePath}'", 0, expression) };
         var scope = new CmScope(_project, _registry!, _library!, Memory, cm, program.Type, _ => { });
-        var compiled = Expression.Compile(expression, scope, new ExpressionOptions(AllowFunctions: true, AllowTimers: false), Expressions.ValueType.Bool);
+        var compiled = Expression.Compile(expression, scope, new ExpressionOptions(AllowFunctions: true, AllowTimers: false), ApolloIQ.Core.Expressions.ValueType.Bool);
         return () => compiled.Evaluate(Context(program));
     }
 
@@ -296,7 +292,7 @@ public sealed class LogicProgram
         foreach (var program in Programs)
         {
             var match = previous.Programs.FirstOrDefault(p => p.Id == program.Id);
-            if (match is null || program.Type.States.All(s => s.Code != match.State))
+            if (match is null || !program.Type.HasState(match.State))
                 continue;
             program.State = match.State;
             program.StateCycles = match.StateCycles;
@@ -305,6 +301,9 @@ public sealed class LogicProgram
         }
         Cycle = previous.Cycle;
     }
+
+    /// <summary>Every alarm of every object: PLC reactive ones (from the PLC logic) and SCADA ones (evaluated here as SCADA will).</summary>
+    public IReadOnlyList<AlarmStatus> AlarmStatuses() => Programs.SelectMany(p => p.AlarmStatuses(Memory)).ToList();
 
     public void RunPlant()
     {
@@ -359,20 +358,6 @@ public sealed class LogicProgram
             Memory.Set(program.MemberTrippedSlot, Value.Of(program.MemberTripSlots.Any(slot => Memory.Get(slot).IsTrue)));
         program.Interlocks?.Execute(Context(program), program.State, program.StateSlot >= 0, reset);
 
-        if (program.Pic is not null)
-        {
-            var from = program.State;
-            program.State = program.Pic.Execute(Memory, TimeSeconds);
-            if (program.State != from)
-            {
-                program.StateCycles = 0;
-                StateChanged?.Invoke(new StateChange(Cycle, program.Path, from, program.State, program.State == UniversalStates.UnavailableCode ? "disabled" : "enabled"));
-            }
-            else
-                program.StateCycles++;
-            Memory.Set(program.StateSlot, Value.Of(program.State));
-        }
-
         var context = Context(program);
         foreach (var (field, invert, conditioned) in program.Conditioning)
         {
@@ -406,14 +391,11 @@ public sealed class LogicProgram
             Memory.Set(program.StateSlot, Value.Of(program.State));
         }
 
-        foreach (var output in program.Outputs)
-            output.Execute(context, program.State);
-
         foreach (var step in program.After)
             step.Execute(context);
 
         foreach (var alarm in program.Alarms)
-            alarm.Execute(context, program.ResetThisCycle, program.TakenThisCycle);
+            alarm.Execute(context, TimeSeconds, program.ResetThisCycle, program.TakenThisCycle);
 
         foreach (var command in program.Commands)
             Memory.Set(command, Value.False);

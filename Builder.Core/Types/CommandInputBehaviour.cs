@@ -1,6 +1,10 @@
 using System.Text.Json.Nodes;
 using Builder.Core.Model;
+using ApolloIQ.Core.Alarms;
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Identity;
 using Builder.Core.Tags;
+using NameRules = Builder.Core.Model.NameRules;
 
 namespace Builder.Core.Types;
 
@@ -119,7 +123,7 @@ public static class CommandInputBehaviour
     public static void Configure(Project project, CmLibrary library, Guid controlModuleId, CommandInputConfig? config)
     {
         var cm = project.Get(controlModuleId);
-        var type = library.Find(TypeNameOf(cm));
+        var type = library.Find(InstanceFactory.BlueprintIdOf(cm));
         var own = project.GetChildren(cm.Id).OfType<Tag>().ToList();
         if (config is not null)
         {
@@ -157,13 +161,6 @@ public static class CommandInputBehaviour
         _ => null
     };
 
-    private static string TypeNameOf(ProjectObject obj) => obj switch
-    {
-        ControlModule c => c.TypeName,
-        UnitInstance u => u.BlueprintName,
-        _ => ""
-    };
-
     public static void SetUnitRow(Project project, CmLibrary library, Guid controlModuleId, bool member, string rowName = CommandInputConfig.UnitRow)
     {
         var cm = project.Get(controlModuleId);
@@ -175,7 +172,7 @@ public static class CommandInputBehaviour
             config = config with { Rows = config.Rows.Where(r => r.Source != CommandSource.Unit).ToList() };
         if (member && config.Rows.Any(r => r.Kind == InputKind.Switch))
             throw new ProjectException(ProjectErrors.InvalidInputs, $"{cm.Name} is controlled by a maintained switch and cannot be in a Unit (G-143).", "controlModuleId");
-        var type = library.Find(TypeNameOf(cm));
+        var type = library.Find(InstanceFactory.BlueprintIdOf(cm));
         var hasPair = project.GetChildren(cm.Id).OfType<Tag>().Count(t => t.Group == TagGroup.Cmd && (t.Name == "set_on" || t.Name == "set_off")) == 2;
         var commands = (type?.SingleCommands ?? []).Where(c => c == "reset").ToList();
         if (member && !hasPair && commands.Count == 0)
@@ -191,6 +188,17 @@ public static class CommandInputBehaviour
             : config.Rows.Where(r => r.Source != CommandSource.Unit).ToList();
         Configure(project, library, cm.Id, config with { Rows = rows });
     }
+
+    /// <summary>The stuck alarm of a digital input row (PLC reactive; the command input logic raises it).</summary>
+    public static CmAlarm StuckAlarm(CommandInput row, Guid blueprintId) => new(new AlarmDefinition
+    {
+        Id = StableId.From("apolloiq.builder.stuck-alarm", blueprintId.ToString("D"), row.Name),
+        Name = $"{row.Name}_stuck",
+        Priority = AlarmPriority.Typical(AlarmLevel.Warning),
+        Message = $"{{instance_name}}: command input {row.Name} is stuck",
+        Trigger = AlarmTrigger.State,
+        PlcReactive = true
+    }, AlarmSource.StuckInput);
 
     private static string Key(TagDefinition definition) => $"{definition.Group.Code()}.{definition.Name}";
 }

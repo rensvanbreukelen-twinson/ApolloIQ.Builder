@@ -1,8 +1,8 @@
-using System.Text.Json;
 using Builder.Backend.Services;
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
+using ApolloIQ.Core.Blueprints;
 using Builder.Logic.Blueprints;
 using Builder.Persistence;
 using Builder.Simulator;
@@ -12,23 +12,20 @@ namespace Builder.Tests.Blueprints;
 
 public class CommandInputTests
 {
-    private static Blueprint Load(string name) => JsonSerializer.Deserialize<Blueprint>(
-        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "blueprints", $"{name}.blueprint.json")), Blueprint.Json)!;
-
     private static CmLibrary Library(params Blueprint[] blueprints)
     {
         var library = new CmLibrary();
         foreach (var blueprint in blueprints)
-            library.Add(BlueprintTypes.ToCmType(blueprint));
+            library.Replace(BlueprintTypes.ToCmType(blueprint.Clone()));
         return library;
     }
 
     [Fact]
     public void BlueprintDefaultsCreateTheInputTags()
     {
-        var library = Library(Load("Light"));
+        var library = Library(Fixtures.Load("Light"));
         var project = new Project();
-        var cm = InstanceFactory.Create(project, library, "Light", "L1", null);
+        var cm = InstanceFactory.Create(project, library, Fixtures.Light, "L1", null);
         var tags = project.GetChildren(cm.Id).OfType<Builder.Core.Tags.Tag>().Select(t => $"{t.Group.Code()}.{t.Name}").ToHashSet();
         Assert.Contains("CMD.HMI_on", tags);
         Assert.Contains("CMD.HMI_reset", tags);
@@ -61,9 +58,9 @@ public class CommandInputTests
     [Fact]
     public void InputsSurviveSavingAndLoading()
     {
-        var library = Library(Load("Light"));
+        var library = Library(Fixtures.Load("Light"));
         var project = new Project();
-        var cm = InstanceFactory.Create(project, library, "Light", "L1", null);
+        var cm = InstanceFactory.Create(project, library, Fixtures.Light, "L1", null);
         var directory = Path.Combine(Path.GetTempPath(), $"inputs-{Guid.NewGuid():N}");
         try
         {
@@ -83,16 +80,16 @@ public class CommandInputTests
     [Fact]
     public void AUnitRowCountsOnlyInAutoAndAnOverrideDisconnectsTheUnit()
     {
-        var light = Load("Light");
+        var light = Fixtures.Load("Light");
         var pair = new Blueprint
-        {
+        { Id = Guid.NewGuid(),
             Kind = BlueprintKind.Unit, Name = "Pair", Interfaces = ["Base", "AutoManual"],
-            Roles = [new BlueprintRole { Name = "MAIN", Blueprint = "Light" }],
+            Roles = [new BlueprintRole { Name = "MAIN", BlueprintId = Fixtures.Light }],
             States = [new BlueprintState { Name = "Idle", Category = 200, Initial = true }]
         };
         var library = Library(light, pair);
         var project = new Project();
-        var cm = InstanceFactory.Create(project, library, "Light", "L1", null);
+        var cm = InstanceFactory.Create(project, library, Fixtures.Light, "L1", null);
         CommandInputBehaviour.Configure(project, library, cm.Id, new CommandInputConfig([
             new CommandInput("HMI", CommandSource.Hmi, InputKind.Pulse, On: 1, Off: 1, InAuto: InputInAuto.Ignore),
             new CommandInput("OVR", CommandSource.DigitalInput, InputKind.Button, InputDrives.Off, null, 1, InputInAuto.Override)]));
@@ -132,12 +129,12 @@ public class CommandInputTests
     [Fact]
     public void TheLocalRemoteSelectorChoosesTheRows()
     {
-        var light = Load("Light");
+        var light = Fixtures.Load("Light");
         light.Tags.Add(new BlueprintTag { Group = "FIN", Name = "remote", DataType = "Bool", Source = InputSource.LocalIO });
         light.CommandInputs = null;
         var library = Library(light);
         var project = new Project();
-        var cm = InstanceFactory.Create(project, library, "Light", "L1", null);
+        var cm = InstanceFactory.Create(project, library, Fixtures.Light, "L1", null);
         CommandInputBehaviour.Configure(project, library, cm.Id, new CommandInputConfig([
             new CommandInput("HMI", CommandSource.Hmi, InputKind.Pulse, On: 1, Off: 1, Location: InputLocation.Remote),
             new CommandInput("LOCAL", CommandSource.DigitalInput, InputKind.Button, InputDrives.Toggle, 1, 1, Location: InputLocation.Local)], Selector: "FIN.remote"));
@@ -165,11 +162,11 @@ public class CommandInputTests
     [Fact]
     public void ASwitchControlledCmCannotJoinAUnit()
     {
-        var library = Library(Load("Light"));
+        var library = Library(Fixtures.Load("Light"));
         var project = new Project();
-        var cm = InstanceFactory.Create(project, library, "Light", "L1", null);
+        var cm = InstanceFactory.Create(project, library, Fixtures.Light, "L1", null);
         CommandInputBehaviour.Configure(project, library, cm.Id, new CommandInputConfig([new CommandInput("SW", CommandSource.DigitalInput, InputKind.Switch, On: 1, Off: 1)]));
-        var pair = new Blueprint { Kind = BlueprintKind.Unit, Name = "Pair", Interfaces = ["Base", "AutoManual"], Roles = [new BlueprintRole { Name = "MAIN", Blueprint = "Light" }] };
+        var pair = new Blueprint { Id = Guid.NewGuid(), Kind = BlueprintKind.Unit, Name = "Pair", Interfaces = ["Base", "AutoManual"], Roles = [new BlueprintRole { Name = "MAIN", BlueprintId = Fixtures.Light }] };
         var unit = UnitSupport.Create(project, pair, "PAIR", null);
         Assert.Throws<ProjectException>(() => UnitSupport.SetMember(project, library, unit.Id, "MAIN", cm.Id));
     }
@@ -177,18 +174,18 @@ public class CommandInputTests
     [Fact]
     public void AnOverrideOnAMemberPutsTheUnitInManualWithAnAlarm()
     {
-        var light = Load("Light");
+        var light = Fixtures.Load("Light");
         var pair = new Blueprint
-        {
+        { Id = Guid.NewGuid(),
             Kind = BlueprintKind.Unit, Name = "Pair", Interfaces = ["Base", "AutoManual"],
-            Roles = [new BlueprintRole { Name = "MAIN", Blueprint = "Light" }],
+            Roles = [new BlueprintRole { Name = "MAIN", BlueprintId = Fixtures.Light }],
             States = [new BlueprintState { Name = "Idle", Category = 200, Initial = true },
                 new BlueprintState { Name = "Lit", Category = 400, Entry = [new BlueprintAction { Tag = "MAIN.CMD.set_on", Value = "TRUE" }] }],
-            Transitions = [new BlueprintTransition { Name = "go", From = ["Idle"], To = "Lit", Guard = "MAIN.STS.state = Off" }]
+            Transitions = [new BlueprintTransition { Name = "go", From = ["Idle"], To = "Lit", Guard = "[MAIN.STS.state] == Off" }]
         };
         var library = Library(light, pair);
         var project = new Project();
-        var cm = InstanceFactory.Create(project, library, "Light", "L1", null);
+        var cm = InstanceFactory.Create(project, library, Fixtures.Light, "L1", null);
         CommandInputBehaviour.Configure(project, library, cm.Id, new CommandInputConfig([
             new CommandInput("OVR", CommandSource.DigitalInput, InputKind.Button, InputDrives.Off, null, 1, InputInAuto.Override)]));
         var unit = UnitSupport.Create(project, pair, "PAIR", null);

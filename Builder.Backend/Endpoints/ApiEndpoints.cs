@@ -3,7 +3,6 @@ using Builder.Backend.Services;
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
-using Builder.Persistence.Export;
 
 namespace Builder.Backend.Endpoints;
 
@@ -18,30 +17,9 @@ public static class ApiEndpoints
         api.MapGet("/library/types", (CmLibrary library) =>
             library.Types.Where(t => !t.IsUnit).OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Select(t => t.ToDto()).ToList());
 
-        api.MapGet("/library/errors", (CmLibrary library) =>
-            library.Errors.Select(e => new LibraryErrorDto(e.File, e.Path, e.Message, e.Line)).ToList());
-
         api.MapGet("/projects", (ProjectWorkspace workspace) => workspace.List());
 
-        api.MapGet("/conventions", () => Conventions.Current);
-
-        api.MapGet("/examples", (ExampleProjects examples) => examples.List());
-
-        api.MapPost("/examples/{file}", (string file, ExampleProjects examples, ProjectWorkspace workspace, CmLibrary library, BlueprintStore blueprints) =>
-        {
-            var example = examples.Find(file);
-            var names = workspace.List().Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var name = example.Name;
-            for (var i = 2; names.Contains(name); i++)
-                name = $"{example.Name} ({i})";
-            var session = workspace.Create(name);
-            session.Change(p =>
-            {
-                ExampleProjects.Apply(p, library, blueprints, example);
-                return 0;
-            });
-            return Results.Created($"/api/projects/{session.Id}", ToDto(session));
-        });
+        api.MapGet("/conventions", () => ApolloIQ.Core.Conventions.Conventions.Current);
 
         api.MapPost("/projects", (CreateProjectRequest request, ProjectWorkspace workspace) =>
         {
@@ -53,12 +31,12 @@ public static class ApiEndpoints
 
         project.MapGet("", (Guid projectId, ProjectWorkspace workspace) => ToDto(workspace.Get(projectId)));
 
-        project.MapGet("/tree", (Guid projectId, ProjectWorkspace workspace) =>
-            workspace.Get(projectId).Read(p => Mapping.Tree(p, null)));
+        project.MapGet("/tree", (Guid projectId, ProjectWorkspace workspace, CmLibrary library) =>
+            workspace.Get(projectId).Read(p => Mapping.Tree(p, library, null)));
 
-        project.MapPost("/folders", (Guid projectId, CreateFolderRequest request, ProjectWorkspace workspace) =>
+        project.MapPost("/folders", (Guid projectId, CreateFolderRequest request, ProjectWorkspace workspace, CmLibrary library) =>
         {
-            var node = workspace.Get(projectId).Change(p => Mapping.Node(p, p.AddFolder(request.Name, request.ParentId)));
+            var node = workspace.Get(projectId).Change(p => Mapping.Node(p, library, p.AddFolder(request.Name, request.ParentId)));
             return Results.Created($"/api/projects/{projectId}/objects/{node.Id}", node);
         });
 
@@ -66,28 +44,28 @@ public static class ApiEndpoints
         {
             var node = workspace.Get(projectId).Change(p =>
             {
-                var cm = InstanceFactory.Create(p, library, request.Type, request.Name, request.ParentId, request.OptionalTags);
+                var cm = InstanceFactory.Create(p, library, request.BlueprintId, request.Name, request.ParentId);
                 UnitSupport.Entered(p, library, blueprints, cm.Id);
-                return Mapping.Node(p, cm);
+                return Mapping.Node(p, library, cm);
             });
             return Results.Created($"/api/projects/{projectId}/objects/{node.Id}", node);
         });
 
-        project.MapGet("/objects/{id:guid}", (Guid projectId, Guid id, ProjectWorkspace workspace) =>
-            workspace.Get(projectId).Read(p => Mapping.Node(p, Container(p, id))));
+        project.MapGet("/objects/{id:guid}", (Guid projectId, Guid id, ProjectWorkspace workspace, CmLibrary library) =>
+            workspace.Get(projectId).Read(p => Mapping.Node(p, library, Container(p, id))));
 
-        project.MapPatch("/objects/{id:guid}", (Guid projectId, Guid id, RenameRequest request, ProjectWorkspace workspace) =>
+        project.MapPatch("/objects/{id:guid}", (Guid projectId, Guid id, RenameRequest request, ProjectWorkspace workspace, CmLibrary library) =>
             workspace.Get(projectId).Change(p =>
             {
                 p.Rename(Container(p, id).Id, request.Name);
-                return Mapping.Node(p, p.Get(id));
+                return Mapping.Node(p, library, p.Get(id));
             }));
 
         project.MapPost("/objects/{id:guid}/move", (Guid projectId, Guid id, MoveRequest request, ProjectWorkspace workspace, CmLibrary library, BlueprintStore blueprints) =>
             workspace.Get(projectId).Change(p =>
             {
                 UnitSupport.Move(p, library, blueprints, Container(p, id).Id, request.ParentId);
-                return Mapping.Node(p, p.Get(id));
+                return Mapping.Node(p, library, p.Get(id));
             }));
 
         project.MapGet("/objects/{id:guid}/deletion-summary", (Guid projectId, Guid id, ProjectWorkspace workspace) =>
@@ -107,49 +85,18 @@ public static class ApiEndpoints
             workspace.Get(projectId).Read(p =>
             {
                 var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
-                foreach (var cm in p.Objects.OfType<ControlModule>())
-                    if (library.Find(cm.TypeName) is { } type) result[p.GetPath(cm.Id)] = type.States.Select(s => s.Name).ToArray();
-                foreach (var unit in p.Objects.OfType<UnitInstance>())
-                    if (library.Find(unit.BlueprintName) is { } type) result[p.GetPath(unit.Id)] = type.States.Select(s => s.Name).ToArray();
+                foreach (var obj in p.Objects.Where(o => o is ControlModule or UnitInstance))
+                    if (library.Find(InstanceFactory.BlueprintIdOf(obj)) is { } type)
+                        result[p.GetPath(obj.Id)] = type.States.Select(s => s.Name).ToArray();
                 return result;
             }));
-
-        project.MapGet("/export/hmi-profile", (Guid projectId, ProjectWorkspace workspace) =>
-            ProfileDto(workspace.Get(projectId)));
-
-        project.MapPut("/export/hmi-profile", (Guid projectId, UpdateHmiExportProfileRequest request, ProjectWorkspace workspace) =>
-        {
-            if (!Enum.TryParse<HmiAddressMode>(request.Address, ignoreCase: true, out var address) || !Enum.IsDefined(address))
-                throw new ProjectException(ProjectErrors.InvalidProfile, $"Unknown address mode '{request.Address}'. Use Path or SymbolKey.", "address");
-            var session = workspace.Get(projectId);
-            session.SetHmiExport(new HmiExportProfile(request.ConnectionId, request.ScanRateMs, address));
-            return ProfileDto(session);
-        });
-
-        project.MapGet("/export/scada", (Guid projectId, ProjectWorkspace workspace, CmLibrary library) =>
-        {
-            var session = workspace.Get(projectId);
-            var bytes = session.Read(p => ScadaExporter.SerializeUtf8(p, library, session.HmiExport, session.Name));
-            return Results.File(bytes, "application/json", ScadaExporter.FileName);
-        });
-
-        project.MapGet("/export/hmi-tags", (Guid projectId, ProjectWorkspace workspace) =>
-        {
-            var session = workspace.Get(projectId);
-            var bytes = session.Read(p => HmiTagsExporter.SerializeUtf8(p, session.HmiExport));
-            return Results.File(bytes, "application/json", HmiTagsExporter.FileName);
-        });
 
         project.MapGet("/tags", (Guid projectId, Guid? scope, string? group, string? direction, string? kind, string? search,
             ProjectWorkspace workspace) =>
             workspace.Get(projectId).Read(p => QueryTags(p, scope, group, direction, kind, search)));
     }
 
-    private static HmiExportProfileDto ProfileDto(ProjectSession session) =>
-        session.Read(p => new HmiExportProfileDto(session.HmiExport.ConnectionId, session.HmiExport.ScanRateMs,
-            session.HmiExport.Address.ToString(), p.Tags.Count()));
-
-    private static ProjectDto ToDto(ProjectSession session) =>
+    internal static ProjectDto ToDto(ProjectSession session) =>
         new(session.Id, session.Name, session.Project.Settings.MaxNameLength);
 
     private static ProjectObject Container(Project project, Guid id)

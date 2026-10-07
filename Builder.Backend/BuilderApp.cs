@@ -16,19 +16,16 @@ public static class BuilderApp
         configure?.Invoke(options);
         var contentRoot = builder.Environment.ContentRootPath;
         var projectsRoot = Path.GetFullPath(Path.Combine(contentRoot, options.ProjectsRoot));
-        var libraryPath = Path.GetFullPath(Path.Combine(contentRoot, options.LibraryPath));
         options.ScenarioPath = Path.GetFullPath(Path.Combine(contentRoot, options.ScenarioPath));
         options.BlueprintPath = Path.GetFullPath(Path.Combine(contentRoot, options.BlueprintPath));
-        options.ExamplePath = Path.GetFullPath(Path.Combine(contentRoot, options.ExamplePath));
 
         builder.Services.AddSingleton(options);
         var blueprints = new BlueprintStore(options.BlueprintPath);
-        var cmLibrary = Directory.Exists(libraryPath) ? CmLibrary.LoadDirectory(libraryPath) : new CmLibrary();
+        var cmLibrary = new CmLibrary();
         var loadedBlueprints = BlueprintEndpoints.LoadInto(cmLibrary, blueprints);
         builder.Services.AddSingleton(cmLibrary);
         builder.Services.AddSingleton(new ProjectWorkspace(projectsRoot));
         builder.Services.AddSingleton(blueprints);
-        builder.Services.AddSingleton(new ExampleProjects(options.ExamplePath));
         builder.Services.AddSingleton<SimulationHost>();
         builder.Services.AddSingleton<SimulatorTcpService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SimulatorTcpService>());
@@ -41,14 +38,10 @@ public static class BuilderApp
 
         var app = builder.Build();
 
-        var library = app.Services.GetRequiredService<CmLibrary>();
-        if (!Directory.Exists(libraryPath))
-            app.Logger.LogWarning("CM library folder {Path} does not exist", libraryPath);
-        foreach (var error in library.Errors)
-            app.Logger.LogError("CM library: {Error}", error.ToString());
-        app.Logger.LogInformation("Loaded {Count} CM types from {Path}; projects in {Projects}",
-            library.Types.Count, libraryPath, projectsRoot);
-        app.Logger.LogInformation("Loaded {Count} blueprints from {Path}: {Names}", loadedBlueprints.Count, options.BlueprintPath, string.Join(", ", loadedBlueprints));
+        if (!Directory.Exists(options.BlueprintPath))
+            app.Logger.LogWarning("Blueprint folder {Path} does not exist", options.BlueprintPath);
+        app.Logger.LogInformation("Loaded {Count} blueprints from {Path}: {Names}; projects in {Projects}", loadedBlueprints.Count, options.BlueprintPath,
+            string.Join(", ", loadedBlueprints), projectsRoot);
 
         app.UseCors();
         app.UseProjectErrors();
@@ -60,6 +53,7 @@ public static class BuilderApp
         app.MapBlueprintApi();
         app.MapConfiguratorApi();
         app.MapCommandInputApi();
+        app.MapExportApi();
         app.MapHub<SimulationHub>("/hubs/simulation");
         return app;
     }

@@ -1,6 +1,7 @@
 using Builder.Core.Model;
 using Builder.Core.Types;
 using Builder.Logic.Blueprints;
+using ApolloIQ.Core.Blueprints;
 
 namespace Builder.Backend.Services;
 
@@ -10,8 +11,8 @@ public static class UnitSupport
     {
         var equipmentModule = blueprint.Kind == BlueprintKind.EM;
         project.CheckNewChild(name, parentId, ObjectKind.Unit, equipmentModule);
-        var unit = project.AddUnit(name, parentId, blueprint.Name, blueprint.Version, equipmentModule: equipmentModule);
-        var type = BlueprintTypes.ToCmType(blueprint);
+        var unit = project.AddUnit(name, parentId, blueprint.Id, blueprint.Version, equipmentModule: equipmentModule);
+        var type = BlueprintTypes.ToCmType(blueprint.Clone());
         foreach (var template in type.ExpandTags())
             project.AddTag(unit.Id, template.ToDefinition());
         if (type.DefaultCommandInputs is { } inputs)
@@ -25,20 +26,14 @@ public static class UnitSupport
         return unit;
     }
 
-    public static string TypeOf(ProjectObject obj) => obj switch
-    {
-        ControlModule c => c.TypeName,
-        UnitInstance u => u.BlueprintName,
-        _ => ""
-    };
-
     public static void CheckRole(Project project, BlueprintStore blueprints, UnitInstance unit, string role, Guid? memberId)
     {
-        var definition = blueprints.Find(unit.BlueprintName)?.Roles.FirstOrDefault(r => r.Name == role)
+        var definition = blueprints.Find(unit.BlueprintId)?.Roles.FirstOrDefault(r => r.Name == role)
             ?? throw new ProjectException(ProjectErrors.InvalidUnit, $"{unit.Name} has no role '{role}'.", "role");
-        if (memberId is { } id && project.Get(id) is var member && !string.Equals(TypeOf(member), definition.Blueprint, StringComparison.OrdinalIgnoreCase))
+        if (memberId is { } id && project.Get(id) is var member && InstanceFactory.BlueprintIdOf(member) != definition.BlueprintId)
             throw new ProjectException(ProjectErrors.InvalidUnit,
-                $"Role {role} needs a {definition.Blueprint}; {member.Name} is a {TypeOf(member)}.", "controlModuleId");
+                $"Role {role} needs a {blueprints.Find(definition.BlueprintId)?.Name ?? definition.BlueprintId.ToString()}; " +
+                $"{member.Name} is a {blueprints.Find(InstanceFactory.BlueprintIdOf(member))?.Name ?? "different blueprint"}.", "controlModuleId");
     }
 
     public static void SetMember(Project project, CmLibrary library, Guid unitId, string role, Guid? memberId)
@@ -71,8 +66,8 @@ public static class UnitSupport
             return;
         if (unit.RoleMembers.Values.Contains(id))
             return;
-        var role = blueprints.Find(unit.BlueprintName)?.Roles.FirstOrDefault(r =>
-            string.Equals(r.Blueprint, TypeOf(member), StringComparison.OrdinalIgnoreCase) && !unit.RoleMembers.ContainsKey(r.Name));
+        var role = blueprints.Find(unit.BlueprintId)?.Roles.FirstOrDefault(r =>
+            r.BlueprintId == InstanceFactory.BlueprintIdOf(member) && !unit.RoleMembers.ContainsKey(r.Name));
         if (role is not null)
             SetMember(project, library, unit.Id, role.Name, id);
     }

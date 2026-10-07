@@ -1,0 +1,30 @@
+{
+  "schema": "apolloiq.blueprint/1",
+  "id": "0b1e0000-0000-4000-8000-000000000005",
+  "kind": "Unit",
+  "name": "Plant",
+  "version": "0.1.0",
+  "description": "A Unit that runs one lighting group (Unit fixture).",
+  "interfaces": [ "Base", "Switchable", "Resettable", "AutoManual" ],
+  "tags": [],
+  "roles": [ { "name": "GROUP", "blueprintId": "0b1e0000-0000-4000-8000-000000000004" } ],
+  "states": [
+    { "name": "Idle", "category": 200, "initial": true },
+    { "name": "StartingGroup", "category": 300, "entry": [ { "tag": "GROUP.CMD.set_on", "value": "TRUE" } ] },
+    { "name": "Producing", "category": 400 },
+    { "name": "StoppingGroup", "category": 100, "entry": [ { "tag": "GROUP.CMD.set_off", "value": "TRUE" } ] },
+    { "name": "Fault", "text": "Plant fault", "category": 500 }
+  ],
+  "transitions": [
+    { "name": "start", "from": [ "Idle" ], "to": "StartingGroup", "guard": "[CMD.set_on]", "priority": 10 },
+    { "name": "running", "from": [ "StartingGroup" ], "to": "Producing", "guard": "[GROUP.STS.state] == Lit", "priority": 10 },
+    { "name": "stop", "from": [ "StartingGroup", "Producing" ], "to": "StoppingGroup", "guard": "[CMD.set_off]", "priority": 10 },
+    { "name": "stopped", "from": [ "StoppingGroup" ], "to": "Idle", "guard": "[GROUP.is_available]", "priority": 10 },
+    { "name": "group_fault", "from": [ "StartingGroup", "Producing" ], "to": "Fault", "guard": "[GROUP.is_shutdown]", "priority": 1 },
+    { "name": "reset", "from": [ "Fault" ], "to": "Idle", "guard": "[CMD.reset] && ![GROUP.is_shutdown]", "priority": 10 }
+  ],
+  "always": [ { "tag": "STS.remote_ok", "value": "[STS.enabled] && [GROUP.STS.remote_ok]" } ],
+  "alarms": [],
+  "plant": [],
+  "interlocks": []
+}

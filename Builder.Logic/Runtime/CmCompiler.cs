@@ -1,10 +1,11 @@
+using ApolloIQ.Core.Alarms;
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Expressions;
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
-using Builder.Logic.Blocks;
-using Builder.Logic.Expressions;
 using Builder.Logic.Model;
-using ValueType = Builder.Logic.Expressions.ValueType;
+using ValueType = ApolloIQ.Core.Expressions.ValueType;
 
 namespace Builder.Logic.Runtime;
 
@@ -22,7 +23,6 @@ internal sealed class CmCompiler
     private readonly Action<Guid> _dependsOn;
     private readonly IReadOnlyDictionary<string, ControlModule?>? _members;
     private readonly HashSet<string> _reported = [];
-    private static readonly System.Text.RegularExpressions.Regex RoleToken = new(@"\{role:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\}");
 
     public CmCompiler(Project project, TagRegistry registry, CmLibrary library, TagMemory memory, ControlModule cm, CmType type,
         List<LogicError> errors, Action<Guid> dependsOn, IReadOnlyDictionary<string, ControlModule?>? members = null)
@@ -38,22 +38,16 @@ internal sealed class CmCompiler
         _dependsOn = dependsOn;
         _scope = new CmScope(project, registry, library, memory, cm, type, dependsOn);
         var stateTag = registry.FindByPath($"{_path}.STS.state");
-        _program = new CmProgram(cm.Id, _path, type, stateTag is not null && memory.Slots.TryGetValue(stateTag.Id, out var slot) ? slot : -1);
+        _program = new CmProgram(cm.Id, _path, type, stateTag is not null && memory.Slots.TryGetValue(stateTag.Id, out var slot) ? slot : -1)
+        {
+            Name = cm.Name,
+            Priorities = cm.AlarmPriorities
+        };
     }
 
     public CmProgram Compile()
     {
-        LogicModel model;
-        try
-        {
-            model = LogicModelParser.Parse(_type.Logic);
-        }
-        catch (LogicException ex)
-        {
-            _errors.AddRange(ex.Errors.Select(Prefix));
-            return _program;
-        }
-
+        var model = _type.Logic;
         foreach (var tag in _registry.ForControlModule(_cm.Id))
         {
             if (tag.Group == TagGroup.Cmd && tag.DataType == TagDataType.Bool)
@@ -69,15 +63,6 @@ internal sealed class CmCompiler
 
         if (_registry.FindByPath($"{_path}.CMD.reset") is { DataType: TagDataType.Bool } reset)
             _program.ResetSlot = _memory.Slots[reset.Id];
-        if (_type.IsPriorityInputControl)
-        {
-            var pic = new PicProgram(_cm.Pic ?? PicConfiguration.Default,
-                name => _registry.FindByPath($"{_path}.{name}") is { } tag ? _memory.Slots[tag.Id] : -1);
-            if (pic.Complete && _program.StateSlot >= 0)
-                _program.Pic = pic;
-            else
-                _errors.Add(new LogicError(Prefix("builtin"), "The PIC is missing OUT.set_on, OUT.set_off or its STS tags. Recreate it from its type."));
-        }
 
         if (_cm.CommandInputs is { Rows.Count: > 0 } inputs)
         {
@@ -88,10 +73,11 @@ internal sealed class CmCompiler
                     autoSlot = s;
             }
             var problems = new List<string>();
-            _program.Inputs = new CommandInputProgram(inputs, name => _registry.FindByPath($"{_path}.{name}") is { } tag ? _memory.Slots[tag.Id] : -1,
-                autoSlot, problems);
+            _program.Inputs = new CommandInputProgram(inputs, name => Slot($"{_path}.{name}"), autoSlot, problems);
             foreach (var problem in problems.Distinct())
                 _errors.Add(new LogicError(Prefix("commandInputs"), problem));
+            foreach (var row in inputs.Rows.Where(r => r.IsPhysical && r.StuckTime is not null))
+                _program.TagAlarms.Add((CommandInputBehaviour.StuckAlarm(row, _type.Id), Slot($"{_path}.ALM.{row.Name}_stuck.active")));
         }
 
         foreach (var wire in _cm.CommandWires)
@@ -103,8 +89,7 @@ internal sealed class CmCompiler
             }
             if (owner != _cm.Id)
                 _dependsOn(owner);
-            int Command(string name) => _registry.FindByPath($"{_path}.CMD.{name}") is { } tag ? _memory.Slots[tag.Id] : -1;
-            var commands = wire.Commands.Select(Command).ToList();
+            var commands = wire.Commands.Select(name => Slot($"{_path}.CMD.{name}")).ToList();
             if (commands.Any(c => c < 0))
             {
                 _errors.Add(new LogicError(Prefix("wires"), $"A command wire from {_project.GetPath(source.Id)} writes a command this CM does not have."));
@@ -136,156 +121,108 @@ internal sealed class CmCompiler
         }
         _program.TransitionList.Sort((a, b) => a.Priority != b.Priority ? a.Priority.CompareTo(b.Priority) : a.Order.CompareTo(b.Order));
         if (model.HasStateMachine && _program.StateSlot < 0)
-            _errors.Add(new LogicError(Prefix("logic.stateMachine"), "The CM has no STS.state tag."));
+            _errors.Add(new LogicError(Prefix("stateMachine"), "The CM has no STS.state tag."));
 
-        foreach (var output in model.Outputs)
+        foreach (var alarm in _type.Alarms)
         {
-            if (IsAbsentOptional(output.Target))
+            if (!alarm.Evaluated)
+            {
+                if (alarm.Source != AlarmSource.StuckInput)
+                    _program.TagAlarms.Add((alarm, Slot($"{_path}.ALM.{alarm.Name}.active")));
                 continue;
-            var target = Target(output.Target, $"{output.Location}", plant: false, requireGroup: TagGroup.Out);
-            List<(int, int)>? states = null;
-            if (output.States is not null)
-            {
-                states = [];
-                foreach (var name in output.States)
-                {
-                    if (StateRange(name, output.Location) is { } range)
-                        states.Add(range);
-                }
             }
-            var when = output.When is null ? null : CompileExpression(output.When, $"{output.Location}.when", ValueType.Bool);
-            if (target is { } slot && (output.When is null || when is not null))
-            {
-                if (_memory.TypeOf(slot) != TagDataType.Bool)
-                    _errors.Add(new LogicError(Prefix(output.Location), $"{output.Target} must be a Bool output."));
-                else
-                    _program.Outputs.Add(new CompiledOutput(slot, states, when));
-            }
+            CompileAlarm(alarm, model);
         }
-
-        foreach (var alarm in _type.AlarmsFor(_cm.OptionalTags).Where(a => a.Plc && !a.Trip))
-        {
-            var location = $"alarms.{alarm.Name}";
-            int Slot(string field) => _registry.FindByPath($"{_path}.ALM.{alarm.Name}.{field}") is { } tag ? _memory.Slots[tag.Id] : -1;
-            var active = Slot("active");
-            var enabled = Slot("enabled");
-            if (active < 0 || enabled < 0)
-            {
-                _errors.Add(new LogicError(Prefix(location), $"The CM has no ALM.{alarm.Name}.active or .enabled tag. Recreate the CM from its type."));
-                continue;
-            }
-            var condition = CompileExpression(alarm.Condition, $"{location}.condition", ValueType.Bool);
-            var latch = CompileExpression(alarm.Latch, $"{location}.latch", ValueType.Bool);
-            if (alarm.OnTransition is { } transition && model.Transitions.All(t => t.Name != transition))
-            {
-                _errors.Add(new LogicError(Prefix($"{location}.onTransition"), $"No transition is named '{transition}'."));
-                continue;
-            }
-            if (condition is not null && latch is not null)
-                _program.Alarms.Add(new CompiledAlarm(alarm.Name, condition, latch, active, enabled, Slot("raise_count"), alarm.OnTransition));
-        }
+        foreach (var rule in InterlockRule.WithAlarmNames(_cm.Interlocks).Where(r => r.Kind == InterlockKind.Trip))
+            _program.TagAlarms.Add((InterlockRule.TripAlarm(rule, $"{{instance_name}}: trip {rule.Alarm}"), Slot($"{_path}.ALM.{rule.Alarm}.active")));
 
         _program.Timers = Enumerable.Repeat(-1d, _program.TimerList.Count).ToArray();
         _program.State = _type.InitialState;
         return _program;
     }
 
-    private void CompileSteps(IReadOnlyList<LogicStep> steps, List<CompiledStep> into, bool plant)
+    private void CompileAlarm(CmAlarm alarm, LogicModel model)
     {
-        foreach (var step in steps)
+        var location = $"alarms.{alarm.Name}";
+        int active = -1, enabled = -1, count = -1;
+        if (alarm.PlcReactive)
         {
-            switch (step)
+            active = Slot($"{_path}.ALM.{alarm.Name}.active");
+            enabled = Slot($"{_path}.ALM.{alarm.Name}.enabled");
+            count = Slot($"{_path}.ALM.{alarm.Name}.raise_count");
+            if (active < 0 || enabled < 0)
             {
-                case AssignStep assign:
-                {
-                    if (IsAbsentOptional(assign.Target))
-                        continue;
-                    var target = Target(assign.Target, $"{assign.Location}.set", plant);
-                    if (target is not { } slot)
-                        continue;
-                    var type = TagMemory.LogicType(_memory.TypeOf(slot));
-                    var expression = CompileExpression(assign.Expression, $"{assign.Location}.expr", type);
-                    if (expression is not null)
-                        into.Add(assign.Target.StartsWith('@') ? new CommandCompiled(slot, expression) : new AssignCompiled(slot, expression));
-                    break;
-                }
-                case BlockStep block:
-                {
-                    var definition = BlockLibrary.Get(block.Block);
-                    var inputs = new Expression?[definition.Inputs.Count];
-                    var defaults = new Value[definition.Inputs.Count];
-                    var ok = true;
-                    foreach (var pin in block.Inputs.Keys.Where(k => definition.Inputs.All(p => !string.Equals(p.Name, k, StringComparison.OrdinalIgnoreCase))))
-                    {
-                        _errors.Add(new LogicError(Prefix($"{block.Location}.in.{pin}"), $"{definition.Name} has no input '{pin}'."));
-                        ok = false;
-                    }
-                    foreach (var pin in block.Outputs.Keys.Where(k => definition.Outputs.All(p => !string.Equals(p.Name, k, StringComparison.OrdinalIgnoreCase))))
-                    {
-                        _errors.Add(new LogicError(Prefix($"{block.Location}.out.{pin}"), $"{definition.Name} has no output '{pin}'."));
-                        ok = false;
-                    }
-                    for (var i = 0; i < definition.Inputs.Count; i++)
-                    {
-                        var pin = definition.Inputs[i];
-                        var source = block.Inputs.FirstOrDefault(kv => string.Equals(kv.Key, pin.Name, StringComparison.OrdinalIgnoreCase)).Value ?? pin.Default;
-                        if (source is null)
-                        {
-                            _errors.Add(new LogicError(Prefix($"{block.Location}.in.{pin.Name}"), $"Input '{pin.Name}' of {definition.Name} is required."));
-                            ok = false;
-                            continue;
-                        }
-                        inputs[i] = CompileExpression(source, $"{block.Location}.in.{pin.Name}", pin.Type);
-                        ok &= inputs[i] is not null;
-                    }
-                    var outputs = new int[definition.Outputs.Count];
-                    for (var i = 0; i < definition.Outputs.Count; i++)
-                    {
-                        var pin = definition.Outputs[i];
-                        var target = block.Outputs.FirstOrDefault(kv => string.Equals(kv.Key, pin.Name, StringComparison.OrdinalIgnoreCase)).Value;
-                        if (target is null || IsAbsentOptional(target))
-                        {
-                            outputs[i] = -1;
-                            continue;
-                        }
-                        var slot = Target(target, $"{block.Location}.out.{pin.Name}", plant);
-                        if (slot is { } s && TagMemory.LogicType(_memory.TypeOf(s)) != pin.Type)
-                        {
-                            _errors.Add(new LogicError(Prefix($"{block.Location}.out.{pin.Name}"), $"{pin.Name} is {pin.Type}, but {target} is {_memory.TypeOf(s)}."));
-                            ok = false;
-                        }
-                        outputs[i] = slot ?? -1;
-                        ok &= slot is not null;
-                    }
-                    if (ok)
-                        into.Add(new BlockCompiled(definition.Create(), inputs, defaults, outputs));
-                    break;
-                }
+                _errors.Add(new LogicError(Prefix(location), $"The object has no ALM.{alarm.Name}.active or .enabled tag. Recreate it from its blueprint."));
+                return;
             }
+        }
+        if (alarm.OnTransition is { } transition && model.Transitions.All(t => t.Name != transition))
+        {
+            _errors.Add(new LogicError(Prefix($"{location}.onTransition"), $"No transition is named '{transition}'."));
+            return;
+        }
+        AlarmTriggerLogic? trigger = null;
+        if (!(alarm.OnTransition is not null && alarm.Source == AlarmSource.StateTimeout))
+        {
+            var definition = alarm.Definition.Clone();
+            definition.Condition = Substitute(definition.Condition, location);
+            definition.Input = Substitute(definition.Input, location);
+            definition.HighCaution = Substitute(definition.HighCaution, location);
+            definition.HighWarning = Substitute(definition.HighWarning, location);
+            definition.HighAlarm = Substitute(definition.HighAlarm, location);
+            definition.LowCaution = Substitute(definition.LowCaution, location);
+            definition.LowWarning = Substitute(definition.LowWarning, location);
+            definition.LowAlarm = Substitute(definition.LowAlarm, location);
+            definition.Running = Substitute(definition.Running, location);
+            definition.TriggerExpr = Substitute(definition.TriggerExpr, location);
+            definition.Stop = Substitute(definition.Stop, location);
+            definition.Timeout = Substitute(definition.Timeout, location);
+            try
+            {
+                trigger = AlarmTriggerLogic.Compile(definition, _scope);
+            }
+            catch (ExpressionException ex)
+            {
+                _errors.Add(new LogicError(Prefix(location), ex.Message));
+                return;
+            }
+        }
+        _program.Alarms.Add(new CompiledAlarm(alarm, trigger, active, enabled, count));
+    }
+
+    private int Slot(string path) => _registry.FindByPath(path) is { } tag && _memory.Slots.TryGetValue(tag.Id, out var slot) ? slot : -1;
+
+    private void CompileSteps(IReadOnlyList<AssignStep> steps, List<CompiledStep> into, bool plant)
+    {
+        foreach (var assign in steps)
+        {
+            var target = Target(assign.Target, assign.Location, plant);
+            if (target is not { } slot)
+                continue;
+            var type = TagMemory.LogicType(_memory.TypeOf(slot));
+            var expression = CompileExpression(assign.Expression, assign.Location, type);
+            if (expression is not null)
+                into.Add(assign.Target.StartsWith('@') ? new CommandCompiled(slot, expression) : new AssignCompiled(slot, expression));
         }
     }
 
-    private bool IsAbsentOptional(string reference)
+    /// <summary>Replaces <c>[{role:ROLE.SUB}.rest]</c> with the member's path (EM and Unit).</summary>
+    private string Substitute(string text, string location) => _members is null || text.Length == 0 ? text : Expression.RewriteReferences(text, reference =>
     {
-        if (_registry.FindByPath($"{_path}.{reference}") is not null)
-            return false;
-        var dot = reference.IndexOf('.');
-        return dot > 0 && TagGroupNames.TryParse(reference[..dot], out var group)
-                       && _type.Tags.Any(t => t.Optional && t.Group == group && string.Equals(t.Name, reference[(dot + 1)..], StringComparison.OrdinalIgnoreCase));
-    }
-
-    private string Substitute(string text, string location) => _members is null ? text : RoleToken.Replace(text, m =>
-    {
-        var path = m.Groups[1].Value;
+        if (!reference.StartsWith(InterlockDisplay.RolePrefix, StringComparison.Ordinal))
+            return reference;
+        var close = reference.IndexOf('}');
+        var path = reference[InterlockDisplay.RolePrefix.Length..close];
+        var rest = reference[(close + 1)..];
         var role = path.Split('.')[0];
         if (_members.TryGetValue(role, out var member) && member is not null
             && InterlockSources.ResolveRole(_project, _project.Get(member.Id), path.Contains('.') ? path[(role.Length + 1)..] : "") is { } target)
-            return _project.GetPath(target.Id);
+            return _project.GetPath(target.Id) + rest;
         if (_reported.Add(path))
             _errors.Add(new LogicError(Prefix(location), !_members.ContainsKey(role) ? $"Unknown role {role}."
                 : path == role ? $"Role {role} is not filled; logic that uses it is not executed."
                 : $"Role {path} is not filled; logic that uses it is not executed."));
-        return $"unfilled_{path.Replace('.', '_')}";
+        return $"unfilled_{path.Replace('.', '_')}{rest}";
     });
 
     /// <summary>Compiles an interlock condition in this object's scope (its roles and tags); the target CM runs it (G-172).</summary>
@@ -310,9 +247,12 @@ internal sealed class CmCompiler
         var dot = reference.IndexOf('.');
         var role = reference[1..dot];
         var rest = reference[(dot + 1)..];
-        var path = Substitute($"{{role:{role}}}", location);
         if (_members is null || !_members.TryGetValue(role, out var member) || member is null)
+        {
+            Substitute($"[{InterlockDisplay.RolePrefix}{role}}}.{rest}]", location);
             return null;
+        }
+        var path = _project.GetPath(member.Id);
         if (!rest.StartsWith("CMD.", StringComparison.Ordinal))
         {
             _errors.Add(new LogicError(Prefix(location), $"A Unit may only write its members' commands, not {reference[1..]}."));
@@ -340,7 +280,7 @@ internal sealed class CmCompiler
         return _memory.Slots[tag.Id];
     }
 
-    private int? Target(string reference, string location, bool plant, TagGroup? requireGroup = null)
+    private int? Target(string reference, string location, bool plant)
     {
         if (reference.StartsWith('@'))
             return plant ? null : MemberCommand(reference, location);
@@ -359,15 +299,9 @@ internal sealed class CmCompiler
             ? tag.Group == TagGroup.Fin
             : tag.Group is TagGroup.Int or TagGroup.Out or TagGroup.Sts or TagGroup.Pmt
               && !(tag.Group == TagGroup.Sts && (tag.Name == "state" || tag.Name == "enabled"));
-        if (requireGroup is { } group && tag.Group != group)
-            allowed = false;
         if (!allowed)
         {
-            var rule = plant
-                ? "The plant model may only write FIN tags."
-                : requireGroup == TagGroup.Out
-                    ? "State outputs must be OUT tags."
-                    : "Logic may write INT, OUT, STS (not state or enabled) and PMT tags.";
+            var rule = plant ? "The plant model may only write FIN tags." : "Logic may write INT, OUT, STS (not state or enabled) and PMT tags.";
             _errors.Add(new LogicError(Prefix(location), $"'{reference}' cannot be written here. {rule}"));
             return null;
         }
@@ -392,17 +326,13 @@ internal sealed class CmCompiler
         }
     }
 
+    /// <summary>A category matches its whole range, an object state its own code.</summary>
     private (int, int)? StateRange(string name, string location)
     {
         var state = _type.States.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
         if (state is null)
-        {
             _errors.Add(new LogicError(Prefix(location), $"Unknown state '{name}'."));
-            return null;
-        }
-        return UniversalStates.IsUniversalCode(state.Code) && !_type.ExactStates
-            ? UniversalStates.Range(state.Code)
-            : (state.Code, state.Code + 1);
+        return state?.Range;
     }
 
     private int? StateCode(string name, string location)
@@ -412,8 +342,6 @@ internal sealed class CmCompiler
             _errors.Add(new LogicError(Prefix(location), $"Unknown state '{name}'."));
         return state?.Code;
     }
-
-    private LogicError Prefix(LogicError error) => error with { Location = Prefix(error.Location) };
 
     private string Prefix(string location) => $"{_path} ({_type.Name}) {location}";
 }

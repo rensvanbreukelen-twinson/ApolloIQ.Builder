@@ -4,6 +4,7 @@
         <RootNamespace>Builder.Tests</RootNamespace>
     </PropertyGroup>
     <ItemGroup>
+        <ProjectReference Include="..\Core\ApolloIQ.Core\ApolloIQ.Core.csproj" />
         <ProjectReference Include="..\Builder.Core\Builder.Core.csproj" />
         <ProjectReference Include="..\Builder.Persistence\Builder.Persistence.csproj" />
         <ProjectReference Include="..\Builder.Backend\Builder.Backend.csproj" />
@@ -12,13 +13,7 @@
         <FrameworkReference Include="Microsoft.AspNetCore.App" />
     </ItemGroup>
     <ItemGroup>
-        <None Include="..\Library\cm-types\*.cmtype.json" LinkBase="cm-types" CopyToOutputDirectory="PreserveNewest" />
-        <None Include="Legacy\cm-types\*.cmtype.json" Link="cm-types\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-        <None Include="Legacy\scenarios\*.scenarios.json" Link="scenarios\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-        <None Include="..\Library\scenarios\*.scenarios.json" LinkBase="blueprint-scenarios" CopyToOutputDirectory="PreserveNewest" />
-        <None Include="..\Library\blueprints\*.blueprint.json" LinkBase="blueprints" CopyToOutputDirectory="PreserveNewest" />
-        <None Include="..\Library\examples\*.example.json" LinkBase="examples" CopyToOutputDirectory="PreserveNewest" />
-        <None Include="Golden\*.json" />
+        <None Include="Fixtures\**\*.json" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
     <ItemGroup>
       <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />

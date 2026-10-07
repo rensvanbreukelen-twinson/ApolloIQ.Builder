@@ -49,12 +49,12 @@ public static class TopologyEndpoints
                 return ToDto(p);
             }));
 
-        project.MapGet("/deployment", (Guid projectId, ProjectWorkspace workspace) =>
+        project.MapGet("/deployment", (Guid projectId, ProjectWorkspace workspace, Builder.Core.Types.CmLibrary library) =>
             workspace.Get(projectId).Read(p => p.Objects
                 .Where(o => o is ControlModule)
                 .OrderBy(o => p.GetPath(o.Id), StringComparer.OrdinalIgnoreCase)
                 .Select(o => new DeploymentItemDto(o.Id, p.GetPath(o.Id), "controlModule",
-                    (o as ControlModule)?.TypeName, (o as ControlModule)?.ExecutionDeviceId,
+                    (o is ControlModule tc ? library.Find(tc.BlueprintId)?.Name : null), (o as ControlModule)?.ExecutionDeviceId,
                     p.GetChildren(o.Id).OfType<Tag>().Where(t => t.Group == TagGroup.Fin).OrderBy(t => t.Name, StringComparer.Ordinal)
                         .Select(t => new OriginDto(t.Id, p.GetPath(t.Id), t.Description, t.Origin?.DeviceId, t.Origin?.Source, t.Origin?.Address)).ToList()))
                 .ToList()));

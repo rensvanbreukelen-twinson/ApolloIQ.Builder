@@ -18,9 +18,9 @@ public sealed class SimulationApiTests : IAsyncLifetime
         _server = await ApiServer.StartAsync();
         _project = (await _server.Post<ProjectDto>("/api/projects", new CreateProjectRequest("Sim"))).Id;
         var pms = await _server.Post<TreeNodeDto>($"/api/projects/{_project}/folders", new CreateFolderRequest("PMS", null));
-        await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest("GenSet", "GEN1", pms.Id, []));
+        await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest(Fixtures.Light, "GEN1", pms.Id));
         _breaker = await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules",
-            new CreateControlModuleRequest("CircuitBreaker", "GEN1_CB", pms.Id, []));
+            new CreateControlModuleRequest(Fixtures.CircuitBreaker, "GEN1_CB", pms.Id));
     }
 
     public async ValueTask DisposeAsync()
@@ -57,11 +57,11 @@ public sealed class SimulationApiTests : IAsyncLifetime
     {
         var view = await Step(4);
         Assert.Equal(200, State(view, "PMS.GEN1_CB"));
-        var written = await _server.Post<TagView>(Url("/write"), new { tag = "PMS.GEN1_CB.CMD.set_on", value = true });
+        var written = await _server.Post<TagView>(Url("/write"), new { tag = "PMS.GEN1_CB.CMD.HMI_on", value = true });
         Assert.Equal("True", written.Value?.ToString());
         view = await Step(1);
         Assert.Equal(300, State(view, "PMS.GEN1_CB"));
-        Assert.Equal("Starting", view.ControlModules.Single(c => c.Path == "PMS.GEN1_CB").StateName);
+        Assert.Equal("Closing", view.ControlModules.Single(c => c.Path == "PMS.GEN1_CB").StateName);
     }
 
     [Fact]
@@ -77,17 +77,17 @@ public sealed class SimulationApiTests : IAsyncLifetime
     [Fact]
     public async Task ForcingAndBadQualityShowInTheTagList()
     {
-        await _server.Post<TagView>(Url("/force"), new { tag = "PMS.GEN1.FIN.coolant_temp", value = 97.5 });
+        await _server.Post<TagView>(Url("/force"), new { tag = "PMS.GEN1.FIN.current", value = 97.5 });
         await _server.Post<TagView>(Url("/quality"), new { tag = "PMS.GEN1_CB.FIN.feedback", bad = true });
         await Step(1);
         var tags = await _server.Get<List<TagView>>(Url("/tags"));
-        var coolant = tags.Single(t => t.Path == "PMS.GEN1.FIN.coolant_temp");
-        Assert.True(coolant.Forced);
-        Assert.Equal("97.5", coolant.Value?.ToString());
+        var current = tags.Single(t => t.Path == "PMS.GEN1.FIN.current");
+        Assert.True(current.Forced);
+        Assert.Equal("97.5", current.Value?.ToString());
         Assert.False(tags.Single(t => t.Path == "PMS.GEN1_CB.FIN.feedback").Good);
-        Assert.Equal("FIN", coolant.Group);
+        Assert.Equal("FIN", current.Group);
 
-        var released = await _server.Post<TagView>(Url("/unforce"), new { tag = "PMS.GEN1.FIN.coolant_temp" });
+        var released = await _server.Post<TagView>(Url("/unforce"), new { tag = "PMS.GEN1.FIN.current" });
         Assert.False(released.Forced);
         var response = await _server.Client.PostAsync(Url("/unforce-all"), null, Ct);
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
@@ -97,7 +97,7 @@ public sealed class SimulationApiTests : IAsyncLifetime
     public async Task ProjectChangesReloadTheSimulation()
     {
         await Step(4);
-        await _server.Post<TagView>(Url("/write"), new { tag = "PMS.GEN1_CB.CMD.set_on", value = true });
+        await _server.Post<TagView>(Url("/write"), new { tag = "PMS.GEN1_CB.CMD.HMI_on", value = true });
         await Step(3);
         var rename = await _server.Client.PatchAsJsonAsync($"/api/projects/{_project}/objects/{_breaker.Id}", new RenameRequest("GEN_CB"), Ct);
         rename.EnsureSuccessStatusCode();
@@ -122,6 +122,23 @@ public sealed class SimulationApiTests : IAsyncLifetime
 
         var reset = await _server.Post<SimulationView>(Url("/reset"), new { });
         Assert.Equal(0, reset.Status.Cycle);
+    }
+
+    [Fact]
+    public async Task AlarmsAreListedWithTheirOriginAndState()
+    {
+        await Step(2);
+        await _server.Post<TagView>(Url("/write"), new { tag = "PMS.GEN1.FIN.current", value = 4.5 });
+        await Step(1);
+        var alarms = await _server.Get<List<System.Text.Json.JsonElement>>(Url("/alarms"));
+        var overcurrent = alarms.Single(a => a.GetProperty("object").GetString() == "PMS.GEN1" && a.GetProperty("name").GetString() == "Overcurrent");
+        Assert.True(overcurrent.GetProperty("active").GetBoolean());
+        Assert.False(overcurrent.GetProperty("plcReactive").GetBoolean());
+        Assert.Equal("Warning", overcurrent.GetProperty("rangeLevel").GetString());
+        Assert.Equal("GEN1: lamp current high", overcurrent.GetProperty("message").GetString());
+        var latched = alarms.Single(a => a.GetProperty("name").GetString() == "CurrentWhileOff");
+        Assert.True(latched.GetProperty("plcReactive").GetBoolean());
+        Assert.True(latched.GetProperty("active").GetBoolean());
     }
 
     [Fact]

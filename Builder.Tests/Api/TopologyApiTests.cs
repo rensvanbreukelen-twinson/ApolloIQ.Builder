@@ -18,7 +18,7 @@ public sealed class TopologyApiTests : IAsyncLifetime
     {
         _server = await ApiServer.StartAsync();
         _project = (await _server.Post<ProjectDto>("/api/projects", new CreateProjectRequest("Topology"))).Id;
-        _gen = await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest("GenSet", "GEN1", null, []));
+        _gen = await _server.Post<TreeNodeDto>($"/api/projects/{_project}/control-modules", new CreateControlModuleRequest(Fixtures.Light, "GEN1", null));
     }
 
     public async ValueTask DisposeAsync()
@@ -50,19 +50,19 @@ public sealed class TopologyApiTests : IAsyncLifetime
         var deployment = await _server.Get<List<DeploymentItemDto>>(Url("/deployment"));
         var gen = Assert.Single(deployment);
         Assert.Equal(plc, gen.DeviceId);
-        var running = gen.Inputs.Single(i => i.Tag == "GEN1.FIN.running");
+        var running = gen.Inputs.Single(i => i.Tag == "GEN1.FIN.feedback");
         await Put<object>(Url($"/tags/{running.TagId}/origin"), new OriginRequest(ctrl, "Modbus TCP", "40021"));
 
         var report = await _server.Get<BindingDto>(Url("/binding"));
-        Assert.Contains(report.Issues, i => i.Code == "safety" && i.Subject == "GEN1.FIN.running");
-        var access = report.Accesses.Single(a => a.Tag == "GEN1.FIN.running" && a.Critical);
+        Assert.Contains(report.Issues, i => i.Code == "safety" && i.Subject == "GEN1.FIN.feedback");
+        var access = report.Accesses.Single(a => a.Tag == "GEN1.FIN.feedback" && a.Critical);
         Assert.Equal(("Relayed", "PLC1 → SCADA → CTRL"), (access.Kind, access.Path));
 
         await Put<TopologyDto>(Url("/topology"), new TopologyDto(topology.Devices,
             [.. topology.Links, new LinkDto(null, "PLC1", "CTRL", "Modbus TCP", "Control")]));
         report = await _server.Get<BindingDto>(Url("/binding"));
         Assert.Equal(0, report.Errors);
-        Assert.Equal("40021", report.Accesses.Single(a => a.Tag == "GEN1.FIN.running" && a.Critical).Address);
+        Assert.Equal("40021", report.Accesses.Single(a => a.Tag == "GEN1.FIN.feedback" && a.Critical).Address);
 
         var scada = topology.Devices.Single(d => d.Name == "SCADA").Id!.Value;
         var refused = await _server.Client.PutAsJsonAsync(Url($"/objects/{_gen.Id}/device"), new DeviceRequest(scada), Ct);

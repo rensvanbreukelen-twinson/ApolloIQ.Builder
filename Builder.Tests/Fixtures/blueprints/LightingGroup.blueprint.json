@@ -1,0 +1,54 @@
+{
+  "schema": "apolloiq.blueprint/1",
+  "id": "0b1e0000-0000-4000-8000-000000000004",
+  "kind": "EM",
+  "name": "LightingGroup",
+  "version": "0.1.0",
+  "description": "A light fed through a breaker (Equipment module fixture).",
+  "interfaces": [ "Base", "Switchable", "Resettable", "Interlocks", "AutoManual" ],
+  "tags": [
+    { "id": "3c9d64a1-6a51-4d8e-9a4c-2f7b8a1d0001", "group": "PAR", "name": "feed_timeout", "dataType": "Real", "description": "Time for the feeder to close", "unit": "s", "initial": "2" },
+    { "id": "3c9d64a1-6a51-4d8e-9a4c-2f7b8a1d0002", "group": "OUT", "name": "beacon", "dataType": "Bool", "description": "Beacon while the group is lit" }
+  ],
+  "roles": [
+    { "name": "FEED", "blueprintId": "0b1e0000-0000-4000-8000-000000000003" },
+    { "name": "LAMP", "blueprintId": "0b1e0000-0000-4000-8000-000000000001" }
+  ],
+  "states": [
+    { "name": "Idle", "category": 200, "initial": true, "run": [ { "tag": "OUT.beacon", "value": "FALSE" } ] },
+    {
+      "name": "Feeding", "text": "Closing the feeder", "category": 300,
+      "entry": [ { "tag": "FEED.CMD.set_on", "value": "TRUE" } ],
+      "run": [ { "tag": "OUT.beacon", "value": "FALSE" } ],
+      "timeout": { "time": "[PAR.feed_timeout]", "goTo": "Fault", "alarm": "FeederDidNotClose", "alarmId": "3c9d64a1-6a51-4d8e-9a4c-2f7b8a1d0010", "priority": 22 }
+    },
+    { "name": "Lighting", "text": "Switching the lamp on", "category": 300, "entry": [ { "tag": "LAMP.CMD.set_on", "value": "TRUE" } ], "run": [ { "tag": "OUT.beacon", "value": "FALSE" } ] },
+    { "name": "Lit", "category": 400, "run": [ { "tag": "OUT.beacon", "value": "TRUE" } ] },
+    { "name": "Dimming", "text": "Switching the lamp off", "category": 100, "entry": [ { "tag": "LAMP.CMD.set_off", "value": "TRUE" } ], "run": [ { "tag": "OUT.beacon", "value": "FALSE" } ] },
+    { "name": "Fault", "text": "Group fault", "description": "The lamp broke, the feeder did not close or a trip escalated", "category": 500, "run": [ { "tag": "OUT.beacon", "value": "FALSE" } ] }
+  ],
+  "transitions": [
+    { "name": "start", "from": [ "Idle" ], "to": "Feeding", "guard": "[CMD.set_on] && [LOK.can_on]", "priority": 10 },
+    { "name": "fed", "from": [ "Feeding" ], "to": "Lighting", "guard": "[FEED.is_closed]", "priority": 10 },
+    { "name": "lit", "from": [ "Lighting" ], "to": "Lit", "guard": "[LAMP.STS.state] == On", "priority": 10 },
+    { "name": "stop", "from": [ "Lighting", "Lit" ], "to": "Dimming", "guard": "[CMD.set_off]", "priority": 10 },
+    { "name": "dark", "from": [ "Dimming" ], "to": "Idle", "guard": "[LAMP.STS.state] == Available", "priority": 10 },
+    { "name": "lamp_broken", "from": [ "Lighting", "Lit" ], "to": "Fault", "guard": "[LAMP.STS.state] == Broken", "priority": 1 },
+    { "name": "reset", "from": [ "Fault" ], "to": "Idle", "guard": "[CMD.reset] && [LAMP.STS.state] != Broken", "priority": 10 }
+  ],
+  "always": [
+    { "tag": "STS.remote_ok", "value": "[STS.enabled] && [LAMP.STS.remote_ok] && [FEED.STS.remote_ok]" }
+  ],
+  "alarms": [
+    {
+      "id": "3c9d64a1-6a51-4d8e-9a4c-2f7b8a1d0020", "name": "LampBroken", "priority": 20, "message": "{instance_name}: the lamp is broken",
+      "trigger": "State", "plcReactive": true, "condition": "[LAMP.STS.state] == Broken", "latched": false
+    }
+  ],
+  "plant": [],
+  "interlocks": [
+    { "target": "LAMP", "kind": "SwitchOn", "condition": "[FEED.is_closed]", "text": "Feeder closed" },
+    { "target": "LAMP", "kind": "Trip", "condition": "![FEED.is_closed]", "text": "Feeder opened", "alarm": "FeederOpen", "alarmId": "3c9d64a1-6a51-4d8e-9a4c-2f7b8a1d0030", "priority": 20, "escalate": "EM" },
+    { "target": "", "kind": "SwitchOn", "condition": "[FEED.STS.state] != Tripped", "text": "" }
+  ]
+}

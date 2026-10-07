@@ -14,7 +14,7 @@ public sealed record SimTagValue(Guid Id, string Path, object? Value, bool Good,
 
 public sealed record SimChangeBatch(long Cycle, double TimeSeconds, IReadOnlyList<SimTagValue> Values);
 
-public sealed record SimControlModule(Guid Id, string Path, string Type, int State, string StateName, double StateSeconds);
+public sealed record SimControlModule(Guid Id, string Path, string Type, int State, string StateName, string StateText, double StateSeconds);
 
 public sealed record SimStatus(SimulationStatus Status, long Cycle, double TimeSeconds, double CycleSeconds, double Speed, int Errors);
 

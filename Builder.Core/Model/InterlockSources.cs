@@ -1,3 +1,4 @@
+using ApolloIQ.Core.Expressions;
 using Builder.Core.Types;
 
 namespace Builder.Core.Model;
@@ -16,7 +17,7 @@ public static class InterlockSources
         var result = new List<InterlockSource>();
         foreach (var owner in SelfAndContainers(project, targetId))
         {
-            var type = library.Find(TypeName(owner));
+            var type = library.Find(InstanceFactory.BlueprintIdOf(owner));
             foreach (var rule in InterlockRule.WithAlarmNames(type?.Interlocks ?? []))
             {
                 if (ResolveRole(project, owner, rule.Target)?.Id == targetId)
@@ -35,7 +36,7 @@ public static class InterlockSources
     public static IReadOnlyList<(InterlockSource Source, ProjectObject? Target)> DefinedBy(Project project, CmLibrary library, ProjectObject owner)
     {
         var result = new List<(InterlockSource, ProjectObject?)>();
-        foreach (var rule in InterlockRule.WithAlarmNames(library.Find(TypeName(owner))?.Interlocks ?? []))
+        foreach (var rule in InterlockRule.WithAlarmNames(library.Find(InstanceFactory.BlueprintIdOf(owner))?.Interlocks ?? []))
             result.Add((new InterlockSource(owner, rule, true), ResolveRole(project, owner, rule.Target)));
         foreach (var rule in OwnRules(owner))
             result.Add((new InterlockSource(owner, rule, false), rule.TargetId is { } id ? project.Find(id) : owner));
@@ -47,13 +48,6 @@ public static class InterlockSources
         ControlModule cm => cm.Interlocks,
         UnitInstance unit => unit.Interlocks,
         _ => []
-    };
-
-    public static string TypeName(ProjectObject obj) => obj switch
-    {
-        ControlModule cm => cm.TypeName,
-        UnitInstance unit => unit.BlueprintName,
-        _ => ""
     };
 
     /// <summary>Follows a role path ("", "BREAKER", "GEN1.BREAKER") from an owner through the members of its Units and EMs.</summary>
@@ -88,10 +82,11 @@ public static class InterlockSources
     };
 }
 
-public static partial class InterlockDisplay
+/// <summary>Interlock conditions and texts as the HMI and the editors show them: absolute bracketed paths.</summary>
+public static class InterlockDisplay
 {
-    [System.Text.RegularExpressions.GeneratedRegex(@"\{role:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\}")]
-    private static partial System.Text.RegularExpressions.Regex RoleToken();
+    /// <summary>The prefix of a role reference in a blueprint condition after <c>BlueprintTypes</c>: <c>[{role:GEN1.BREAKER}.STS.state]</c>.</summary>
+    public const string RolePrefix = "{role:";
 
     /// <summary>The condition with absolute bracketed paths, as the HMI and the condition text generator read it.</summary>
     public static string Condition(Project project, InterlockSource source)
@@ -99,14 +94,19 @@ public static partial class InterlockDisplay
         if (!source.FromBlueprint)
             return ExpressionReferences.ToDisplay(project, source.Rule.Condition);
         var ownerPath = project.GetPath(source.Owner.Id);
-        var text = RoleToken().Replace(source.Rule.Condition, m =>
-            InterlockSources.ResolveRole(project, source.Owner, m.Groups[1].Value) is { } target ? project.GetPath(target.Id) : $"unfilled_{m.Groups[1].Value}");
-        return LocalTag().Replace(text, m => $"[{ownerPath}.{m.Value}]");
+        return Expression.RewriteReferences(source.Rule.Condition, reference =>
+        {
+            if (!reference.StartsWith(RolePrefix, StringComparison.Ordinal))
+                return $"{ownerPath}.{reference}";
+            var close = reference.IndexOf('}');
+            var role = reference[RolePrefix.Length..close];
+            var rest = reference[(close + 1)..];
+            return InterlockSources.ResolveRole(project, source.Owner, role) is { } target
+                ? project.GetPath(target.Id) + rest
+                : $"unfilled_{role.Replace('.', '_')}{rest}";
+        });
     }
 
     public static string Text(Project project, InterlockSource source) =>
         string.IsNullOrWhiteSpace(source.Rule.Text) ? ConditionText.Generate(Condition(project, source)) : source.Rule.Text;
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"(?<![\w.\[\]])(?:FIN|CMD|OUT|LOK|PAR|SET|PMT|STS|INT)\.[A-Za-z_]\w*(?![\w.\]])")]
-    private static partial System.Text.RegularExpressions.Regex LocalTag();
 }

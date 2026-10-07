@@ -9,7 +9,7 @@ namespace Builder.Tests.Persistence;
 
 public sealed class ProjectStoreTests : IDisposable
 {
-    private static readonly CmLibrary Library = CmLibrary.LoadDirectory(Path.Combine(AppContext.BaseDirectory, "cm-types"));
+    private static readonly CmLibrary Library = Fixtures.Library();
     private static readonly Guid ProjectId = Guid.Parse("f0000000-0000-0000-0000-000000000001");
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), $"builder-store-{Guid.NewGuid():N}");
@@ -27,8 +27,8 @@ public sealed class ProjectStoreTests : IDisposable
         var project = new Project(new ProjectSettings { MaxNameLength = 24 });
         var pms = project.AddFolder("PMS");
         project.AddFolder("Switchboard", pms.Id);
-        var gen1 = InstanceFactory.Create(project, Library, "GenSet", "GEN1", pms.Id, ["FIN.exhaust_temp"]);
-        InstanceFactory.Create(project, Library, "CircuitBreaker", "GEN1_CB", pms.Id);
+        var gen1 = InstanceFactory.Create(project, Library, Fixtures.Light, "GEN1", pms.Id);
+        InstanceFactory.Create(project, Library, Fixtures.CircuitBreaker, "GEN1_CB", pms.Id);
         return (project, gen1);
     }
 
@@ -55,19 +55,22 @@ public sealed class ProjectStoreTests : IDisposable
     public void LoadedTagsKeepIdsSymbolKeysAndDetails()
     {
         var (project, gen1) = Sample();
-        var original = new TagRegistry(project).FindByPath("PMS.GEN1.PAR.cooldown_time")!;
+        var original = new TagRegistry(project).FindByPath("PMS.GEN1.PAR.max_switch_time")!;
         ProjectStore.Save(Dir("a"), ProjectId, "Demo", project);
 
         var loaded = ProjectStore.Load(Dir("a")).Project;
-        var tag = new TagRegistry(loaded).FindByPath("PMS.GEN1.PAR.cooldown_time")!;
+        var tag = new TagRegistry(loaded).FindByPath("PMS.GEN1.PAR.max_switch_time")!;
         Assert.Equal(original.Id, tag.Id);
         Assert.Equal(original.SymbolKey, tag.SymbolKey);
         Assert.Equal(TagDataType.Real, tag.DataType);
         Assert.Equal("s", tag.Unit);
-        Assert.Equal(180, tag.InitialValue!.GetValue<int>());
+        Assert.Equal(2, tag.InitialValue!.GetValue<double>());
         var cm = loaded.Get<ControlModule>(gen1.Id);
-        Assert.Equal(["FIN.exhaust_temp"], cm.OptionalTags);
-        Assert.Equal("1.3.0", cm.TypeVersion);
+        Assert.Equal(Fixtures.Light, cm.BlueprintId);
+        Assert.Equal(ApolloIQ.Core.Versioning.BlueprintVersion.Initial, cm.BlueprintVersion);
+        var file = File.ReadAllText(Path.Combine(Dir("a"), ProjectStore.ControlModulesDirectory, $"{gen1.Id}.json"));
+        Assert.Contains($"\"blueprintId\": \"{Fixtures.Light}\"", file);
+        Assert.Contains("\"blueprintVersion\": \"0.1.0\"", file);
     }
 
     [Fact]
@@ -128,9 +131,9 @@ public sealed class ProjectStoreTests : IDisposable
         var text = File.ReadAllText(Path.Combine(Dir("a"), ProjectStore.ControlModulesDirectory, $"{gen1.Id}.json"));
         var json = JsonNode.Parse(text)!;
         Assert.Equal(ProjectStore.ControlModuleSchema, json["schema"]!.GetValue<string>());
-        Assert.Equal("GenSet", json["type"]!.GetValue<string>());
+        Assert.Equal(Fixtures.Light, Guid.Parse(json["blueprintId"]!.GetValue<string>()));
         Assert.Equal("FIN", json["tags"]![0]!["group"]!.GetValue<string>());
-        Assert.Contains("\"unit\": \"°C\"", text);
+        Assert.Contains("\"unit\": \"s\"", text);
         Assert.DoesNotContain("\r", text);
         Assert.EndsWith("}\n", text);
     }
@@ -171,14 +174,14 @@ public sealed class ProjectStoreTests : IDisposable
         var (project, _) = Sample();
         var breaker = project.Objects.OfType<ControlModule>().Single(c => c.Name == "GEN1_CB");
         project.SetInterlocks(breaker.Id, [
-            new InterlockRule { Kind = InterlockKind.SwitchOn, Condition = ExpressionReferences.ToStored(project, "[PMS.GEN1.STS.state] = ReadyToConnect"), Text = "GEN1 ready to connect" },
-            new InterlockRule { Kind = InterlockKind.Trip, Condition = ExpressionReferences.ToStored(project, "NOT [PMS.GEN1.is_running]"), Alarm = "GenStopped", Escalate = TripEscalation.Unit }]);
+            new InterlockRule { Kind = InterlockKind.SwitchOn, Condition = ExpressionReferences.ToStored(project, "[PMS.GEN1.STS.state] == On"), Text = "GEN1 ready to connect" },
+            new InterlockRule { Kind = InterlockKind.Trip, Condition = ExpressionReferences.ToStored(project, "![PMS.GEN1.is_running]"), Alarm = "GenStopped", Escalate = TripEscalation.Unit }]);
         ProjectStore.Save(Dir("a"), ProjectId, "Demo", project);
 
         var loaded = ProjectStore.Load(Dir("a")).Project;
         var rules = loaded.Get<ControlModule>(breaker.Id).Interlocks;
         Assert.Equal("GEN1 ready to connect", rules[0].Text);
-        Assert.Equal("[PMS.GEN1.STS.state] = ReadyToConnect", ExpressionReferences.ToDisplay(loaded, rules[0].Condition));
+        Assert.Equal("[PMS.GEN1.STS.state] == On", ExpressionReferences.ToDisplay(loaded, rules[0].Condition));
         Assert.Equal(("GenStopped", TripEscalation.Unit), (rules[1].Alarm, rules[1].Escalate));
         Assert.NotNull(new TagRegistry(loaded).FindByPath("PMS.GEN1_CB.ALM.GenStopped.active"));
 

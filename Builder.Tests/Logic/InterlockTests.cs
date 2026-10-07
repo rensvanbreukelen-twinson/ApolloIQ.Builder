@@ -1,7 +1,8 @@
 using Builder.Core.Model;
 using Builder.Core.Tags;
+using ApolloIQ.Core.Expressions;
+using ApolloIQ.Core.Versioning;
 using Builder.Core.Types;
-using Builder.Logic.Expressions;
 using Builder.Logic.Runtime;
 using Builder.Persistence;
 using Xunit;
@@ -11,7 +12,7 @@ namespace Builder.Tests.Logic;
 /// <summary>Project-level interlocks (G-172): lists of Switch on / Switch off / Trip conditions that act in the target CM.</summary>
 public class InterlockTests
 {
-    private static readonly CmLibrary Library = CmLibrary.LoadDirectory(Path.Combine(AppContext.BaseDirectory, "cm-types"));
+    private static readonly CmLibrary Library = Fixtures.Library();
 
     private sealed class Plant
     {
@@ -19,8 +20,8 @@ public class InterlockTests
         {
             Project = new Project();
             var pms = Project.AddFolder("PMS");
-            Gen = InstanceFactory.Create(Project, Library, "GenSet", "GEN1", pms.Id);
-            Breaker = InstanceFactory.Create(Project, Library, "CircuitBreaker", "GEN1_CB", pms.Id);
+            Gen = InstanceFactory.Create(Project, Library, Fixtures.Light, "GEN1", pms.Id);
+            Breaker = InstanceFactory.Create(Project, Library, Fixtures.CircuitBreaker, "GEN1_CB", pms.Id);
         }
 
         public Project Project { get; }
@@ -66,11 +67,11 @@ public class InterlockTests
         public void CloseBreakerOnRunningGen()
         {
             Run(3);
-            Set("PMS.GEN1.CMD.set_on", true);
-            Run(180);
-            Assert.Equal(401, State("PMS.GEN1"));
-            Set("PMS.GEN1_CB.CMD.set_on", true);
-            Run(2);
+            Set("PMS.GEN1.CMD.HMI_on", true);
+            Run(3);
+            Assert.Equal(400, State("PMS.GEN1"));
+            Set("PMS.GEN1_CB.CMD.HMI_on", true);
+            Run(3);
             Assert.Equal(400, State("PMS.GEN1_CB"));
         }
     }
@@ -79,19 +80,19 @@ public class InterlockTests
 
     private static InterlockRule Off(string condition) => new() { Kind = InterlockKind.SwitchOff, Condition = condition };
 
-    private static InterlockRule Trip(string condition, string? alarm = null) => new() { Kind = InterlockKind.Trip, Condition = condition, Alarm = alarm, Severity = 22 };
+    private static InterlockRule Trip(string condition, string? alarm = null) => new() { Kind = InterlockKind.Trip, Condition = condition, Alarm = alarm, Priority = 22 };
 
     [Fact]
     public void SwitchOnBlocksTheCommandAndReportsABitPerCondition()
     {
         var plant = new Plant();
-        plant.Rules(plant.Breaker, On("[PMS.GEN1.STS.state] = ReadyToConnect"), On("TRUE"));
+        plant.Rules(plant.Breaker, On("[PMS.GEN1.STS.state] == On"), On("TRUE"));
         plant.Build();
         Assert.Empty(plant.Program.Errors);
         plant.Run(4);
         Assert.False(plant.Get("PMS.GEN1_CB.LOK.can_on").Bool);
         Assert.Equal(2, plant.Get("PMS.GEN1_CB.LOK.can_on_status").Number);
-        plant.Set("PMS.GEN1_CB.CMD.set_on", true);
+        plant.Set("PMS.GEN1_CB.CMD.HMI_on", true);
         plant.Run(2);
         Assert.Equal(200, plant.State("PMS.GEN1_CB"));
 
@@ -103,21 +104,21 @@ public class InterlockTests
     public void SwitchOffKeepsTheEngineRunningWhileTheBreakerIsClosed()
     {
         var plant = new Plant();
-        plant.Rules(plant.Gen, Off("NOT [PMS.GEN1_CB.is_closed]"));
+        plant.Rules(plant.Gen, Off("![PMS.GEN1_CB.is_closed]"));
         plant.Build();
         Assert.Empty(plant.Program.Errors);
         plant.CloseBreakerOnRunningGen();
         Assert.False(plant.Get("PMS.GEN1.LOK.can_off").Bool);
-        plant.Set("PMS.GEN1.CMD.set_off", true);
+        plant.Set("PMS.GEN1.CMD.HMI_off", true);
         plant.Run(3);
-        Assert.Equal(401, plant.State("PMS.GEN1"));
+        Assert.Equal(400, plant.State("PMS.GEN1"));
     }
 
     [Fact]
     public void TripOpensAtOnceRaisesAnAlarmOnTheOwnerAndLatchesUntilReset()
     {
         var plant = new Plant();
-        plant.Rules(plant.Breaker, Trip("NOT [PMS.GEN1.is_running]", "GenStopped"));
+        plant.Rules(plant.Breaker, Trip("![PMS.GEN1.is_running]", "GenStopped"));
         plant.Build();
         Assert.Empty(plant.Program.Errors);
         plant.Run(3);
@@ -125,7 +126,7 @@ public class InterlockTests
         Assert.False(plant.Get("PMS.GEN1_CB.ALM.GenStopped.active").Bool);
 
         plant.CloseBreakerOnRunningGen();
-        plant.Force("PMS.GEN1.FIN.running", false);
+        plant.Set("PMS.GEN1.CMD.HMI_off", true);
         plant.Run(2);
         Assert.True(plant.Get("PMS.GEN1_CB.LOK.trip").Bool);
         Assert.True(plant.Get("PMS.GEN1_CB.ALM.GenStopped.active").Bool);
@@ -133,11 +134,12 @@ public class InterlockTests
         Assert.False(plant.Get("PMS.GEN1_CB.LOK.can_on").Bool);
         Assert.NotEqual(400, plant.State("PMS.GEN1_CB"));
 
-        plant.Release("PMS.GEN1.FIN.running");
-        plant.Set("PMS.GEN1.CMD.set_on", true);
-        plant.Run(180);
+        plant.Run(3);
+        plant.Set("PMS.GEN1.CMD.HMI_on", true);
+        plant.Run(3);
+        Assert.Equal(400, plant.State("PMS.GEN1"));
         Assert.True(plant.Get("PMS.GEN1_CB.LOK.trip").Bool);
-        plant.Set("PMS.GEN1_CB.CMD.reset", true);
+        plant.Set("PMS.GEN1_CB.CMD.HMI_reset", true);
         plant.Run(1);
         Assert.False(plant.Get("PMS.GEN1_CB.LOK.trip").Bool);
         Assert.False(plant.Get("PMS.GEN1_CB.ALM.GenStopped.active").Bool);
@@ -148,7 +150,7 @@ public class InterlockTests
     public void TripIsOnlyArmedWhileTheTargetHeadsOn()
     {
         var plant = new Plant();
-        plant.Rules(plant.Breaker, Trip("NOT [PMS.GEN1.is_running]"));
+        plant.Rules(plant.Breaker, Trip("![PMS.GEN1.is_running]"));
         plant.Build();
         plant.Run(20);
         Assert.Equal(200, plant.State("PMS.GEN1_CB"));
@@ -160,11 +162,11 @@ public class InterlockTests
     public void BadQualityBlocksAPermissiveButDoesNotTrip()
     {
         var plant = new Plant();
-        plant.Rules(plant.Breaker, On("[PMS.GEN1.FIN.ready]"), Trip("NOT [PMS.GEN1.FIN.ready]"));
+        plant.Rules(plant.Breaker, On("[PMS.GEN1.STS.enabled]"), Trip("![PMS.GEN1.STS.enabled]"));
         plant.Build();
         plant.Run(3);
         Assert.True(plant.Get("PMS.GEN1_CB.LOK.can_on").Bool);
-        plant.Program.Memory.SetBadQuality(plant.Program.Memory.Slots[new TagRegistry(plant.Project).FindByPath("PMS.GEN1.FIN.ready")!.Id], true);
+        plant.Program.Memory.SetBadQuality(plant.Program.Memory.Slots[new TagRegistry(plant.Project).FindByPath("PMS.GEN1.STS.enabled")!.Id], true);
         plant.Run(1);
         Assert.False(plant.Get("PMS.GEN1_CB.LOK.can_on").Bool);
         Assert.False(plant.Get("PMS.GEN1_CB.LOK.trip").Bool);
@@ -192,14 +194,15 @@ public class InterlockTests
             Assert.Throws<ProjectException>(() => plant.Rules(plant.Breaker, new InterlockRule { TargetId = plant.Gen.Id, Condition = "TRUE" })).Code);
         Assert.Equal(ProjectErrors.InvalidInterlock, Assert.Throws<ProjectException>(() => plant.Rules(plant.Breaker, On(" "))).Code);
         Assert.Equal(ProjectErrors.DuplicateName, Assert.Throws<ProjectException>(() => plant.Rules(plant.Breaker, Trip("TRUE", "Tripped"))).Code);
-        Assert.Equal(ProjectErrors.InvalidSeverity,
-            Assert.Throws<ProjectException>(() => plant.Rules(plant.Breaker, new InterlockRule { Kind = InterlockKind.Trip, Condition = "TRUE", Severity = 99 })).Code);
+        Assert.Equal(ProjectErrors.InvalidPriority,
+            Assert.Throws<ProjectException>(() => plant.Rules(plant.Breaker, new InterlockRule { Kind = InterlockKind.Trip, Condition = "TRUE", Priority = 99 })).Code);
     }
 
     [Theory]
-    [InlineData("time([PMS.GEN1.is_running]) > 5", "not allowed")]
-    [InlineData("[PMS.GEN1.FIN.frequency]", "Bool")]
+    [InlineData("TIME([PMS.GEN1.is_running]) > 5", "not allowed")]
+    [InlineData("[PMS.GEN1.PAR.max_switch_time]", "Bool")]
     [InlineData("[PMS.NOPE.FIN.running]", "Unknown")]
+    [InlineData("NOT [PMS.GEN1.is_running]", "Unexpected")]
     public void InvalidConditionsAreReportedOnTheTarget(string condition, string message)
     {
         var plant = new Plant();
@@ -209,15 +212,18 @@ public class InterlockTests
         Assert.StartsWith("PMS.GEN1_CB PMS.GEN1_CB (CircuitBreaker) interlocks[1]", error.Location);
         Assert.Contains(message, error.Message);
         Assert.Contains(message, LogicProgram.CheckInterlockCondition(plant.Project, Library, plant.Breaker.Id, condition));
-        Assert.Null(LogicProgram.CheckInterlockCondition(plant.Project, Library, plant.Breaker.Id, "STS.remote_ok AND [PMS.GEN1.is_running]"));
+        Assert.Null(LogicProgram.CheckInterlockCondition(plant.Project, Library, plant.Breaker.Id, "[STS.remote_ok] && [PMS.GEN1.is_running]"));
     }
 
     [Fact]
     public void ConditionsAreStoredWithIdsSurviveRenamesAndRoundTrip()
     {
         var plant = new Plant();
-        plant.Rules(plant.Breaker, On("[PMS.GEN1.is_running]", "Engine running"), Trip("NOT [PMS.GEN1.is_running]", "GenStopped"));
+        plant.Rules(plant.Breaker, On("[PMS.GEN1.is_running]", "Engine running"), Trip("![PMS.GEN1.is_running]", "GenStopped"));
         Assert.DoesNotContain("GEN1", plant.Breaker.Interlocks[0].Condition);
+        Assert.Equal($"[{{{plant.Gen.Id:D}}}.is_running]", plant.Breaker.Interlocks[0].Condition);
+        var alarmId = plant.Breaker.Interlocks[1].AlarmId;
+        Assert.NotNull(alarmId);
         plant.Project.Rename(plant.Gen.Id, "GEN_PORT");
         Assert.Equal("[PMS.GEN_PORT.is_running]", ExpressionReferences.ToDisplay(plant.Project, plant.Breaker.Interlocks[0].Condition));
 
@@ -229,7 +235,8 @@ public class InterlockTests
             var rules = loaded.Get<ControlModule>(plant.Breaker.Id).Interlocks;
             Assert.Equal([InterlockKind.SwitchOn, InterlockKind.Trip], rules.Select(r => r.Kind));
             Assert.Equal("GenStopped", rules[1].Alarm);
-            Assert.Equal(22, rules[1].Severity);
+            Assert.Equal(22, rules[1].Priority);
+            Assert.Equal(alarmId, rules[1].AlarmId);
             Assert.Equal("Engine running", rules[0].Text);
         }
         finally
@@ -243,8 +250,8 @@ public class InterlockTests
     {
         var project = new Project();
         var pms = project.AddFolder("PMS");
-        var unit = project.AddUnit("U", pms.Id, "X", "1");
-        var cb = InstanceFactory.Create(project, Library, "CircuitBreaker", "CB", unit.Id);
+        var unit = project.AddUnit("U", pms.Id, Guid.NewGuid(), BlueprintVersion.Initial);
+        var cb = InstanceFactory.Create(project, Library, Fixtures.CircuitBreaker, "CB", unit.Id);
         project.SetInterlocks(unit.Id, [new InterlockRule { TargetId = cb.Id, Condition = "TRUE" }]);
         Assert.Single(unit.Interlocks);
         project.Delete(cb.Id);

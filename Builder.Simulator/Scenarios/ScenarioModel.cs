@@ -23,8 +23,9 @@ public sealed record ExpectStep(IReadOnlyList<string> Conditions, string Locatio
 
 public sealed record ScenarioWire(string Source, string Mode, string? Command);
 
-public sealed record ScenarioInstance(string Name, string Type, IReadOnlyList<string> OptionalTags, IReadOnlyList<ScenarioWire>? Wires = null,
-    System.Text.Json.JsonElement? Pic = null, System.Text.Json.JsonElement? CommandInputs = null, string? Parent = null, string? Role = null);
+/// <summary>An instance a scenario creates; <see cref="Type"/> is the blueprint name.</summary>
+public sealed record ScenarioInstance(string Name, string Type, IReadOnlyList<ScenarioWire>? Wires = null,
+    System.Text.Json.JsonElement? CommandInputs = null, string? Parent = null, string? Role = null);
 
 public sealed record Scenario(string Name, string Description, IReadOnlyList<ScenarioInstance> Instances, IReadOnlyList<ScenarioStep> Steps);
 

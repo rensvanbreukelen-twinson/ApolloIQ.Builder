@@ -4,5 +4,6 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="..\Builder.Core\Builder.Core.csproj"/>
+        <ProjectReference Include="..\Builder.Logic\Builder.Logic.csproj"/>
     </ItemGroup>
 </Project>

@@ -1,15 +1,13 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Builder.Core.Types;
+using ApolloIQ.Core.Alarms;
+using ApolloIQ.Core.Blueprints;
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Versioning;
+using Builder.Core.Model;
 
 namespace Builder.Logic.Blueprints;
-
-public enum BlueprintKind
-{
-    CM,
-    Unit,
-    EM
-}
 
 public enum InputSource
 {
@@ -17,22 +15,25 @@ public enum InputSource
     External
 }
 
-public enum AlarmReaction
-{
-    Reactive,
-    NonReactive
-}
-
+/// <summary>
+/// A blueprint file (<c>&lt;Name&gt;.blueprint.json</c>, schema <see cref="SchemaId"/>). Expressions use the ApolloIQ.Core syntax:
+/// C-style operators and tags in brackets, <c>[CMD.set_on] &amp;&amp; [LOK.can_on]</c>, <c>[ENGINE.STS.state] == Running</c>.
+/// Action targets (<see cref="BlueprintAction.Tag"/>) are plain tag names.
+/// </summary>
 public sealed class Blueprint
 {
     public const string SchemaId = "apolloiq.blueprint/1";
 
     public string Schema { get; set; } = SchemaId;
+
+    /// <summary>Stable id: assigned when the blueprint is first saved, kept on rename. Instances and roles refer to it.</summary>
+    public Guid Id { get; set; }
+
     public BlueprintKind Kind { get; set; } = BlueprintKind.CM;
     public string Name { get; set; } = "";
-    public string Version { get; set; } = "0.1.0";
+    public BlueprintVersion Version { get; set; } = BlueprintVersion.Initial;
     public string Description { get; set; } = "";
-    public List<string> Interfaces { get; set; } = ["Base"];
+    public List<string> Interfaces { get; set; } = [BlueprintCatalog.Base];
     public List<BlueprintTag> Tags { get; set; } = [];
     public List<BlueprintRole> Roles { get; set; } = [];
     public List<BlueprintState> States { get; set; } = [];
@@ -40,9 +41,9 @@ public sealed class Blueprint
     public List<BlueprintAction> Always { get; set; } = [];
     public List<BlueprintAlarm> Alarms { get; set; } = [];
     public List<BlueprintAction> Plant { get; set; } = [];
-    public List<Builder.Core.Model.InterlockRule> Interlocks { get; set; } = [];
+    public List<InterlockRule> Interlocks { get; set; } = [];
     public Dictionary<string, string> Aliases { get; set; } = [];
-    public Builder.Core.Model.CommandInputConfig? CommandInputs { get; set; }
+    public CommandInputConfig? CommandInputs { get; set; }
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -50,10 +51,15 @@ public sealed class Blueprint
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter() }
     };
+
+    public Blueprint Clone() => JsonSerializer.Deserialize<Blueprint>(JsonSerializer.Serialize(this, Json), Json)!;
 }
 
 public sealed class BlueprintTag
 {
+    /// <summary>Stable id: SCADA derives the instance tag ids from it, so a rename keeps trends and links.</summary>
+    public Guid Id { get; set; }
+
     public string Group { get; set; } = "";
     public string Name { get; set; } = "";
     public string DataType { get; set; } = "Bool";
@@ -64,17 +70,28 @@ public sealed class BlueprintTag
     public string? Initial { get; set; }
     public InputSource? Source { get; set; }
     public bool Primary { get; set; }
+
+    public string Key => $"{Group}.{Name}";
 }
 
 public sealed class BlueprintRole
 {
     public string Name { get; set; } = "";
-    public string Blueprint { get; set; } = "";
+
+    /// <summary>The id of the member's blueprint.</summary>
+    public Guid BlueprintId { get; set; }
 }
 
+/// <summary>
+/// One named state of the state machine. <see cref="Name"/> is the identifier used in expressions
+/// (<c>[STS.state] == ReadyForConnection</c>); <see cref="Text"/> is what the operator sees ("Ready for connection").
+/// The code follows from the category and the order (<see cref="BlueprintRules.AssignCodes"/>).
+/// </summary>
 public sealed class BlueprintState
 {
     public string Name { get; set; } = "";
+    public string? Text { get; set; }
+    public string Description { get; set; } = "";
     public int Category { get; set; }
     public int Code { get; set; }
     public bool Initial { get; set; }
@@ -82,21 +99,34 @@ public sealed class BlueprintState
     public List<BlueprintAction> Run { get; set; } = [];
     public List<BlueprintAction> Exit { get; set; } = [];
     public BlueprintTimeout? Timeout { get; set; }
+
+    public StateDefinition ToDefinition() => new(Code, Name, Description, string.IsNullOrWhiteSpace(Text) ? null : Text.Trim());
 }
 
+/// <summary><c>Tag := Value</c>. The tag is a plain name (<c>OUT.coil_on</c>, <c>BREAKER.CMD.set_on</c>), the value an expression.</summary>
 public sealed class BlueprintAction
 {
     public string Tag { get; set; } = "";
     public string Value { get; set; } = "";
 }
 
+/// <summary>
+/// A state timeout. <see cref="Time"/> is a number of seconds (a <c>PAR.&lt;state&gt;_timeout</c> is generated) or a numeric
+/// expression such as <c>[PAR.max_close_time]</c>. The optional alarm is PLC reactive.
+/// </summary>
 public sealed class BlueprintTimeout
 {
     public string Time { get; set; } = "10";
     public string? GoTo { get; set; }
     public string? Alarm { get; set; }
-    public AlarmReaction AlarmKind { get; set; } = AlarmReaction.Reactive;
-    public int Severity { get; set; } = SeverityBands.DefaultSeverity;
+
+    /// <summary>Stable id of the alarm; assigned on save.</summary>
+    public Guid? AlarmId { get; set; }
+
+    public int Priority { get; set; } = AlarmPriority.Default;
+
+    /// <summary>The alarm text; a default is generated when empty.</summary>
+    public string? Message { get; set; }
 }
 
 public sealed class BlueprintTransition
@@ -108,73 +138,60 @@ public sealed class BlueprintTransition
     public int Priority { get; set; } = 10;
 }
 
+/// <summary>
+/// A blueprint alarm: the shared <see cref="AlarmDefinition"/> (written flat in JSON) plus two Builder-only settings,
+/// <see cref="Latched"/> and <see cref="OnTransition"/>, that only apply to PLC reactive alarms.
+/// </summary>
+[JsonConverter(typeof(BlueprintAlarmConverter))]
 public sealed class BlueprintAlarm
 {
-    public string Name { get; set; } = "";
-    public AlarmReaction Kind { get; set; } = AlarmReaction.Reactive;
-    public string Condition { get; set; } = "";
-    public int Severity { get; set; } = SeverityBands.DefaultSeverity;
-    public string Message { get; set; } = "";
-    public string? OnTransition { get; set; }
+    public AlarmDefinition Alarm { get; set; } = new();
+
+    /// <summary>Stays active until <c>CMD.reset</c> (needs the Resettable interface).</summary>
     public bool Latched { get; set; }
+
+    /// <summary>Raised only in the cycle this transition is taken (condition optional).</summary>
+    public string? OnTransition { get; set; }
 }
 
-public sealed record InterfaceTag(string Group, string Name, string DataType, string Description, string? Initial = null);
-
-public sealed record BlueprintInterface(string Name, bool Required, IReadOnlyList<InterfaceTag> Tags);
-
-public static class BlueprintCatalog
+/// <summary>Writes a <see cref="BlueprintAlarm"/> as one flat object: the alarm definition's fields plus <c>latched</c> and <c>onTransition</c>.</summary>
+public sealed class BlueprintAlarmConverter : JsonConverter<BlueprintAlarm>
 {
-    public const string AnyState = "*";
-
-    public static readonly IReadOnlyList<string> Groups = ["FIN", "CMD", "OUT", "LOK", "PAR", "SET", "STS", "INT"];
-
-    public static readonly IReadOnlyList<string> DataTypes = ["Bool", "Int", "Real", "String"];
-
-    public static readonly IReadOnlyList<StateCategory> Categories =
-        [.. UniversalStates.Categories.Where(c => c.Reporting)];
-
-    public static readonly IReadOnlyList<BlueprintInterface> Interfaces =
-    [
-        new("Base", true, [
-            new("STS", "state", "Int", "Current state code"),
-            new("STS", "enabled", "Bool", "The function is enabled"),
-            new("STS", "remote_ok", "Bool", "Remote control is possible")]),
-        new("Switchable", false, [
-            new("CMD", "set_on", "Bool", "Switch on"),
-            new("CMD", "set_off", "Bool", "Switch off")]),
-        new("Resettable", false, [new("CMD", "reset", "Bool", "Reset a fault")]),
-        new(InterlocksInterface, false, [
-            new("LOK", "can_on", "Bool", "All Switch on interlocks met and no trip latched", "TRUE"),
-            new("LOK", "can_off", "Bool", "All Switch off interlocks met", "TRUE"),
-            new("LOK", "trip", "Bool", "A trip is latched: the object switches off", "FALSE"),
-            new("LOK", "can_on_status", "Int", "Bit n = Switch on interlock n met", "0"),
-            new("LOK", "can_off_status", "Int", "Bit n = Switch off interlock n met", "0")]),
-        new(ContainerInterface, false, [
-            new("INT", "member_tripped", "Bool", "A trip is latched somewhere below", "FALSE"),
-            new("INT", "escalated", "Bool", "A trip below escalated to this container", "FALSE")]),
-        new("AutoManual", false, [
-            new("CMD", "set_auto", "Bool", "Switch to auto"),
-            new("CMD", "set_manual", "Bool", "Switch to manual"),
-            new("STS", "auto", "Bool", "In auto")])
-    ];
-
-    public const string InterlocksInterface = "Interlocks";
-
-    public const string ContainerInterface = "Container";
-
-    public static IEnumerable<InterfaceTag> InterfaceTags(Blueprint blueprint) =>
-        Interfaces.Where(i => i.Required || (i.Name != ContainerInterface && blueprint.Interfaces.Contains(i.Name))
-                              || (i.Name is "AutoManual" or ContainerInterface && blueprint.Kind != BlueprintKind.CM))
-            .SelectMany(i => i.Tags);
-
-    public static void AssignCodes(Blueprint blueprint)
+    public override BlueprintAlarm Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
-        foreach (var group in blueprint.States.GroupBy(s => s.Category))
+        var node = JsonNode.Parse(ref reader) as JsonObject ?? throw new JsonException("An alarm must be an object.");
+        var latched = Take(node, "latched", options);
+        var onTransition = Take(node, "onTransition", options);
+        Take(node, "level", options);
+        return new BlueprintAlarm
         {
-            var code = group.Key;
-            foreach (var state in group)
-                state.Code = code++;
-        }
+            Alarm = node.Deserialize<AlarmDefinition>(options) ?? new AlarmDefinition(),
+            Latched = latched?.GetValueKind() == JsonValueKind.True,
+            OnTransition = onTransition?.GetValueKind() == JsonValueKind.String ? onTransition.GetValue<string>() : null
+        };
+    }
+
+    public override void Write(Utf8JsonWriter writer, BlueprintAlarm value, JsonSerializerOptions options)
+    {
+        var node = JsonSerializer.SerializeToNode(value.Alarm, options)!.AsObject();
+        node.Remove(Name("Level", options));
+        node.Remove(Name("ObjectId", options));
+        node.Remove(Name("AlarmTag", options));
+        node[Name("Latched", options)] = value.Latched;
+        if (!string.IsNullOrWhiteSpace(value.OnTransition))
+            node[Name("OnTransition", options)] = value.OnTransition;
+        node.WriteTo(writer, options);
+    }
+
+    private static string Name(string property, JsonSerializerOptions options) => options.PropertyNamingPolicy?.ConvertName(property) ?? property;
+
+    private static JsonNode? Take(JsonObject node, string camel, JsonSerializerOptions options)
+    {
+        var key = node.Select(p => p.Key).FirstOrDefault(k => string.Equals(k, camel, StringComparison.OrdinalIgnoreCase));
+        if (key is null)
+            return null;
+        var value = node[key];
+        node.Remove(key);
+        return value;
     }
 }

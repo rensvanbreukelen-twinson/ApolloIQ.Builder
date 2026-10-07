@@ -1,7 +1,8 @@
+using ApolloIQ.Core.Alarms;
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Expressions;
 using Builder.Core.Model;
 using Builder.Core.Types;
-using Builder.Logic.Blocks;
-using Builder.Logic.Expressions;
 
 namespace Builder.Logic.Runtime;
 
@@ -39,8 +40,6 @@ public sealed class CmProgram
 
     internal List<CompiledTransition> TransitionList { get; } = [];
 
-    internal List<CompiledOutput> Outputs { get; } = [];
-
     internal List<(int Field, int? Invert, int Conditioned)> Conditioning { get; } = [];
 
     internal List<int> Commands { get; } = [];
@@ -62,9 +61,15 @@ public sealed class CmProgram
 
     internal List<CompiledWire> Wires { get; } = [];
 
-    internal PicProgram? Pic { get; set; }
-
     internal List<CompiledAlarm> Alarms { get; } = [];
+
+    /// <summary>Alarms written by other logic (trips, auto/manual, command inputs), with their ALM.*.active slot.</summary>
+    internal List<(CmAlarm Alarm, int Active)> TagAlarms { get; } = [];
+
+    /// <summary>Alarm priorities of this instance that differ from the blueprint.</summary>
+    internal IReadOnlyDictionary<string, int> Priorities { get; set; } = new Dictionary<string, int>();
+
+    internal string Name { get; set; } = "";
 
     internal string? TakenThisCycle { get; set; }
 
@@ -81,9 +86,31 @@ public sealed class CmProgram
 
     internal bool HasStateMachine => TransitionList.Count > 0 || StateSlot >= 0;
 
-    public string StateName(int code) =>
-        Type.States.FirstOrDefault(s => s.Code == code)?.Name ?? code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    public string StateName(int code) => Type.StateName(code);
+
+    /// <summary>The text the operator sees for a state: the object's own state text, otherwise the category.</summary>
+    public string StateText(int code) => StateNames.DisplayText(code, Type.ObjectStates);
+
+    /// <summary>All alarms of this object and whether they are active now.</summary>
+    public IEnumerable<AlarmStatus> AlarmStatuses(TagMemory memory)
+    {
+        foreach (var alarm in Alarms)
+            yield return Status(alarm.Alarm, alarm.Active, alarm.RangeLevel);
+        foreach (var (alarm, active) in TagAlarms)
+            yield return Status(alarm, active >= 0 && memory.Get(active).IsTrue, null);
+    }
+
+    private AlarmStatus Status(CmAlarm alarm, bool active, AlarmLevel? rangeLevel)
+    {
+        var priority = Priorities.TryGetValue(alarm.Name, out var custom) ? custom : alarm.Definition.Priority;
+        return new AlarmStatus(Path, alarm.Name, priority, AlarmPriority.LevelOf(priority), AlarmRules.FormatMessage(alarm.Definition.Message, Name),
+            alarm.PlcReactive, alarm.Source, active, rangeLevel);
+    }
 }
+
+/// <summary>An alarm of an object in the simulator: PLC reactive ones come from the PLC logic, the others are SCADA's (evaluated here as SCADA will).</summary>
+public sealed record AlarmStatus(string Object, string Name, int Priority, AlarmLevel Level, string Message, bool PlcReactive, AlarmSource Source,
+    bool Active, AlarmLevel? RangeLevel);
 
 internal sealed class CompiledInterlock(InterlockKind kind, Expression condition, string owner, int active, int count)
 {
@@ -192,28 +219,55 @@ internal sealed class CompiledWire(int source, WireMode mode, int on, int off)
     }
 }
 
-internal sealed class CompiledAlarm(string name, Expression condition, Expression latch, int active, int enabled, int count, string? onTransition)
+/// <summary>
+/// One alarm evaluated with the shared trigger logic (<see cref="AlarmTriggerLogic"/>, as SCADA does) plus the on-delay and, for PLC
+/// reactive alarms, the Builder extras: enabled, latch until reset, raised on a transition. PLC reactive alarms write their ALM tags.
+/// </summary>
+internal sealed class CompiledAlarm(CmAlarm alarm, AlarmTriggerLogic? trigger, int active, int enabled, int count)
 {
     private bool _latched;
     private bool _previous;
+    private double? _metSince;
 
-    public string Name { get; } = name;
+    public CmAlarm Alarm { get; } = alarm;
 
-    public void Execute(CmContext context, bool reset, string? taken)
+    public bool Active { get; private set; }
+
+    public AlarmLevel? RangeLevel { get; private set; }
+
+    public void Execute(CmContext context, double now, bool reset, string? taken)
     {
         var memory = context.Memory;
-        var met = condition.IsTrue(context) && (onTransition is null || string.Equals(onTransition, taken, StringComparison.Ordinal));
-        var enabledNow = memory.Get(enabled).IsTrue;
-        var latching = latch.IsTrue(context);
-        if (!enabledNow || !latching)
+        bool met;
+        if (Alarm.OnTransition is { } transition && (Alarm.Source == AlarmSource.StateTimeout || trigger is null))
+            met = string.Equals(transition, taken, StringComparison.Ordinal);
+        else
+        {
+            var evaluation = trigger!.Evaluate(context, now, Active);
+            if (evaluation.Active is not { } value)
+                return;
+            met = value && (Alarm.OnTransition is null || string.Equals(Alarm.OnTransition, taken, StringComparison.Ordinal));
+            RangeLevel = met ? evaluation.RangeLevel : null;
+        }
+
+        if (met)
+            _metSince ??= now;
+        else
+            _metSince = null;
+        var delayed = met && now - _metSince!.Value + 1e-6 >= Alarm.Definition.OnDelaySeconds;
+
+        var enabledNow = enabled < 0 || memory.Get(enabled).IsTrue;
+        if (!enabledNow || !Alarm.Latched)
             _latched = false;
         else
-            _latched = met || (_latched && !reset);
-        var now = enabledNow && (latching ? _latched : met);
-        memory.Set(active, Value.Of(now));
-        if (now && !_previous && count >= 0)
+            _latched = delayed || (_latched && !reset);
+        var now2 = enabledNow && (Alarm.Latched ? _latched : delayed);
+        Active = now2;
+        if (active >= 0)
+            memory.Set(active, Value.Of(now2));
+        if (now2 && !_previous && count >= 0)
             memory.Set(count, Value.Of(memory.Get(count).Number + 1));
-        _previous = now;
+        _previous = now2;
     }
 }
 
@@ -263,36 +317,6 @@ internal sealed class CommandCompiled(int target, Expression expression) : Compi
     {
         if (expression.IsTrue(context))
             context.Write(target, Value.True);
-    }
-}
-
-internal sealed class BlockCompiled(IBlock block, Expression?[] inputs, Value[] defaults, int[] outputs) : CompiledStep
-{
-    private readonly Value[] _inputValues = new Value[inputs.Length];
-    private readonly Value[] _outputValues = new Value[outputs.Length];
-
-    public override void Execute(CmContext context)
-    {
-        for (var i = 0; i < inputs.Length; i++)
-            _inputValues[i] = inputs[i]?.Evaluate(context) ?? defaults[i];
-        for (var i = 0; i < outputs.Length; i++)
-            _outputValues[i] = outputs[i] >= 0 ? context.Memory.Get(outputs[i]) : Value.BadNumber;
-        block.Execute(_inputValues, _outputValues, context.CycleSeconds);
-        for (var i = 0; i < outputs.Length; i++)
-        {
-            if (outputs[i] >= 0)
-                context.Write(outputs[i], _outputValues[i]);
-        }
-    }
-}
-
-internal sealed class CompiledOutput(int target, IReadOnlyList<(int From, int To)>? states, Expression? when)
-{
-    public void Execute(CmContext context, int state)
-    {
-        var inState = states is null || states.Any(r => state >= r.From && state < r.To);
-        var condition = when?.Evaluate(context) ?? Value.True;
-        context.Memory.Set(target, Value.Of(inState && condition.IsTrue));
     }
 }
 

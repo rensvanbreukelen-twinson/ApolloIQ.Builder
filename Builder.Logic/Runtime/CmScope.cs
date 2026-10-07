@@ -1,10 +1,16 @@
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Expressions;
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
-using Builder.Logic.Expressions;
 
 namespace Builder.Logic.Runtime;
 
+/// <summary>
+/// Resolves the bracketed references of an expression for one CM (or EM / Unit):
+/// relative names (<c>[FIN.x]</c>, <c>[ALM.Trip1.active]</c>, <c>[is_running]</c>) are the CM's own; anything else is a path in
+/// the project (<c>[PMS.CB_GEN1.STS.state]</c>, <c>[PMS.GEN1.is_running]</c>).
+/// </summary>
 internal sealed class CmScope(
     Project project,
     TagRegistry registry,
@@ -18,17 +24,10 @@ internal sealed class CmScope(
 
     public TagSymbol? ResolveTag(string reference, bool bracketed)
     {
-        if (cm is not null && LooksLocal(reference))
-        {
-            if (registry.FindByPath($"{_path}.{reference}") is { } local)
-                return Symbol(local, cm, type);
-            if (Absent(reference) is { } absent)
-                return absent;
-            if (!bracketed)
-                return null;
-        }
         if (!bracketed)
             return null;
+        if (cm is not null && LooksLocal(reference))
+            return registry.FindByPath($"{_path}.{reference}") is { } local ? Symbol(local, type) : null;
         if (registry.FindByPath(reference) is not { } tag)
             return null;
         switch (project.Find(tag.ParentId!.Value))
@@ -36,11 +35,11 @@ internal sealed class CmScope(
             case ControlModule owner:
                 if (owner.Id != cm?.Id)
                     dependsOn(owner.Id);
-                return Symbol(tag, owner, library.Find(owner.TypeName));
+                return Symbol(tag, library.Find(owner.BlueprintId));
             case UnitInstance unit:
                 if (unit.Id != cm?.Id)
                     dependsOn(unit.Id);
-                return Symbol(tag, ControlModule.ForUnit(unit), library.Find(unit.BlueprintName));
+                return Symbol(tag, library.Find(unit.BlueprintId));
             default:
                 return null;
         }
@@ -48,30 +47,22 @@ internal sealed class CmScope(
 
     public AliasSymbol? ResolveAlias(string reference, bool bracketed)
     {
-        if (cm is null && !(bracketed && reference.Contains('.')))
+        if (!bracketed)
             return null;
-        ControlModule target = cm!;
+        var dot = reference.LastIndexOf('.');
+        var alias = reference[(dot + 1)..];
+        ProjectObject? target = cm is null ? null : project.Find(cm.Id);
         CmType? targetType = type;
-        var alias = reference;
-        if (bracketed && reference.Contains('.'))
+        if (dot > 0)
         {
-            var dot = reference.LastIndexOf('.');
             var ownerPath = reference[..dot];
-            alias = reference[(dot + 1)..];
-            if (!string.Equals(ownerPath, _path, StringComparison.OrdinalIgnoreCase))
-            {
-                var owner = project.Objects.OfType<ControlModule>()
-                    .FirstOrDefault(c => string.Equals(project.GetPath(c.Id), ownerPath, StringComparison.OrdinalIgnoreCase))
-                    ?? project.Objects.OfType<UnitInstance>()
-                        .Where(u => string.Equals(project.GetPath(u.Id), ownerPath, StringComparison.OrdinalIgnoreCase))
-                        .Select(ControlModule.ForUnit).FirstOrDefault();
-                if (owner is null)
-                    return null;
-                target = owner;
-                targetType = library.Find(owner.TypeName);
-            }
+            target = project.Objects.FirstOrDefault(o => o is ControlModule or UnitInstance
+                                                         && string.Equals(project.GetPath(o.Id), ownerPath, StringComparison.OrdinalIgnoreCase));
+            if (target is null)
+                return null;
+            targetType = library.Find(InstanceFactory.BlueprintIdOf(target));
         }
-        else if (reference.Contains('.'))
+        if (target is null)
             return null;
 
         var ranges = AliasRanges(alias, targetType);
@@ -82,10 +73,11 @@ internal sealed class CmScope(
             return null;
         if (target.Id != cm?.Id)
             dependsOn(target.Id);
-        return new AliasSymbol(Symbol(stateTag, target, targetType)!, ranges);
+        return Symbol(stateTag, targetType) is { } symbol ? new AliasSymbol(symbol, ranges) : null;
     }
 
-    private static IReadOnlyList<(int, int)>? AliasRanges(string alias, CmType? type)
+    /// <summary>A standard alias (is_running …) or a blueprint alias (to a state or a standard alias).</summary>
+    public static IReadOnlyList<(int, int)>? AliasRanges(string alias, CmType? type)
     {
         if (UniversalStates.StandardAliases.TryGetValue(alias, out var codes))
             return codes.Select(UniversalStates.Range).ToList();
@@ -94,48 +86,21 @@ internal sealed class CmScope(
         if (UniversalStates.StandardAliases.TryGetValue(target, out var targetCodes))
             return targetCodes.Select(UniversalStates.Range).ToList();
         var state = type.States.FirstOrDefault(s => string.Equals(s.Name, target, StringComparison.OrdinalIgnoreCase));
-        if (state is null)
-            return null;
-        return UniversalStates.IsUniversalCode(state.Code)
-            ? [UniversalStates.Range(state.Code)]
-            : [(state.Code, state.Code + 1)];
+        return state is null ? null : [state.Range];
     }
 
-    private TagSymbol? Absent(string reference)
-    {
-        var dot = reference.IndexOf('.');
-        if (dot <= 0 || !TagGroupNames.TryParse(reference[..dot], out var group))
-            return null;
-        var name = reference[(dot + 1)..];
-        if (type is null)
-            return null;
-        var template = type.Tags.FirstOrDefault(t => t.Group == group && t.Optional && string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
-        if (template is null && group == TagGroup.Int)
-            template = OptionalBoolInput(name);
-        if (template is null && group == TagGroup.Set && name.StartsWith("invert_", StringComparison.OrdinalIgnoreCase)
-            && OptionalBoolInput(name["invert_".Length..]) is { Source: TagSource.Hardwired })
-            return new TagSymbol(-1, Expressions.ValueType.Bool, $"{_path}.{reference}", Constant: Value.False);
-        if (template is null || !TagMemory.IsLogicType(template.DataType))
-            return null;
-        var value = InitialValues.From(template.AbsentValue ?? template.InitialValue, template.DataType, template.EnumType, type);
-        return new TagSymbol(-1, TagMemory.LogicType(template.DataType), $"{_path}.{reference}", Constant: value);
-    }
-
-    private TagTemplate? OptionalBoolInput(string name) =>
-        type!.Tags.FirstOrDefault(t => t.Group == TagGroup.Fin && t.Optional && t.DataType == TagDataType.Bool
-                                      && string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
-
-    private TagSymbol? Symbol(Tag tag, ControlModule? owner, CmType? ownerType)
+    private TagSymbol? Symbol(Tag tag, CmType? ownerType)
     {
         if (!TagMemory.IsLogicType(tag.DataType) || !memory.Slots.TryGetValue(tag.Id, out var slot))
             return null;
-        var states = tag.Group == TagGroup.Sts && tag.EnumType == UniversalStates.EnumName
-            ? (ownerType?.States ?? UniversalStates.All)
+        var states = tag.Group == TagGroup.Sts && tag.Name == "state"
+            ? ownerType?.States ?? UniversalStates.All
             : null;
         return new TagSymbol(slot, TagMemory.LogicType(tag.DataType), project.GetPath(tag.Id), states);
     }
 
-    private static bool LooksLocal(string reference)
+    /// <summary><c>GROUP.name</c> or <c>ALM.alarm.field</c>, with an upper-case tag group.</summary>
+    public static bool LooksLocal(string reference)
     {
         var dot = reference.IndexOf('.');
         if (dot <= 0 || !TagGroupNames.TryParse(reference[..dot], out var group) || reference[..dot] != reference[..dot].ToUpperInvariant())

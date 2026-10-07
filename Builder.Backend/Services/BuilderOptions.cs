@@ -4,13 +4,11 @@ public sealed class BuilderOptions
 {
     public string ProjectsRoot { get; set; } = "projects";
 
-    public string LibraryPath { get; set; } = "../Library/cm-types";
-
+    /// <summary>Scenario files (<c>*.scenarios.json</c>) run on the blueprints.</summary>
     public string ScenarioPath { get; set; } = "../Library/scenarios";
 
+    /// <summary>The blueprint library (<c>*.blueprint.json</c>).</summary>
     public string BlueprintPath { get; set; } = "../Library/blueprints";
-
-    public string ExamplePath { get; set; } = "../Library/examples";
 
     public int SimulatorTcpPort { get; set; } = 5190;
 

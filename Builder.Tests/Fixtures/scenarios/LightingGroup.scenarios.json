@@ -1,0 +1,99 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "LightingGroup",
+  "scenarios": [
+    {
+      "name": "Feed, light and dim in auto",
+      "instances": [
+        { "name": "GROUP" },
+        { "name": "FEED", "type": "CircuitBreaker", "parent": "GROUP" },
+        { "name": "LAMP", "type": "Light", "parent": "GROUP" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_auto": true } },
+        { "run": 2 },
+        { "expect": "[STS.auto]" },
+        { "set": { "CMD.set_on": true } },
+        { "until": "[STS.state] == Lit", "within": "3 s" },
+        { "expect": [ "LAMP: [STS.state] == On", "FEED: [is_closed]", "[OUT.beacon]", "LAMP: [LOK.can_on]" ] },
+        { "set": { "CMD.set_off": true } },
+        { "until": "[STS.state] == Idle", "within": "2 s" },
+        { "expect": [ "LAMP: [STS.state] == Off", "![OUT.beacon]" ] }
+      ]
+    },
+    {
+      "name": "The feeder does not close",
+      "instances": [
+        { "name": "GROUP" },
+        { "name": "FEED", "type": "CircuitBreaker", "parent": "GROUP" },
+        { "name": "LAMP", "type": "Light", "parent": "GROUP" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_auto": true } },
+        { "run": 2 },
+        { "force": { "FEED.FIN.feedback": false } },
+        { "set": { "CMD.set_on": true } },
+        { "until": "[STS.state] == Fault", "within": "3 s" },
+        { "expect": [ "[ALM.FeederDidNotClose.active]", "FEED: [ALM.NotClosing.active]" ] },
+        { "release": "FEED.FIN.feedback" },
+        { "set": { "CMD.reset": true } },
+        { "until": "[STS.state] == Idle", "within": "1 s" },
+        { "expect": "![ALM.FeederDidNotClose.active]" }
+      ]
+    },
+    {
+      "name": "A broken lamp faults the group",
+      "instances": [
+        { "name": "GROUP" },
+        { "name": "FEED", "type": "CircuitBreaker", "parent": "GROUP" },
+        { "name": "LAMP", "type": "Light", "parent": "GROUP" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_auto": true } },
+        { "run": 2 },
+        { "force": { "LAMP.FIN.feedback": false } },
+        { "set": { "CMD.set_on": true } },
+        { "until": "[STS.state] == Fault", "within": "4 s" },
+        { "expect": [ "LAMP: [STS.state] == Broken", "[ALM.LampBroken.active]" ] }
+      ]
+    },
+    {
+      "name": "A trip on the lamp escalates to the group",
+      "instances": [
+        { "name": "GROUP" },
+        { "name": "FEED", "type": "CircuitBreaker", "parent": "GROUP" },
+        { "name": "LAMP", "type": "Light", "parent": "GROUP" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "set": { "CMD.set_auto": true } },
+        { "run": 2 },
+        { "set": { "CMD.set_on": true } },
+        { "until": "[STS.state] == Lit", "within": "3 s" },
+        { "force": { "FEED.FIN.feedback": false } },
+        { "until": "[STS.state] == Fault", "within": "2 s" },
+        { "expect": [ "LAMP: [LOK.trip]", "[ALM.FeederOpen.active]", "[INT.escalated]" ] },
+        { "until": "LAMP: [STS.state] == Off", "within": "2 s" }
+      ]
+    },
+    {
+      "name": "Unavailable while disabled",
+      "instances": [
+        { "name": "GROUP" },
+        { "name": "FEED", "type": "CircuitBreaker", "parent": "GROUP" },
+        { "name": "LAMP", "type": "Light", "parent": "GROUP" }
+      ],
+      "steps": [
+        { "run": 2 },
+        { "force": { "STS.enabled": false } },
+        { "run": 1 },
+        { "expect": [ "[STS.state] == Unavailable", "[is_unavailable]" ] },
+        { "release": "STS.enabled" },
+        { "until": "[STS.state] == Idle", "within": "1 s" }
+      ]
+    }
+  ]
+}

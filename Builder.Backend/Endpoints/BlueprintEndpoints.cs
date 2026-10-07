@@ -1,80 +1,112 @@
+using ApolloIQ.Core.Blueprints;
+using ApolloIQ.Core.Conventions;
 using Builder.Backend.Services;
 using Builder.Core.Types;
 using Builder.Logic.Blueprints;
 
 namespace Builder.Backend.Endpoints;
 
-public sealed record BlueprintSummaryDto(string Name, string Kind, string Version, string Description, int Errors, int Warnings);
+public sealed record BlueprintSummaryDto(Guid Id, string Name, string Kind, string Version, string Description, int Errors, int Warnings);
 
 public sealed record BlueprintCatalogDto(IReadOnlyList<BlueprintInterface> Interfaces, IReadOnlyList<StateCategory> Categories,
-    IReadOnlyList<string> Groups, IReadOnlyList<string> DataTypes);
+    IReadOnlyList<string> Groups, IReadOnlyList<string> DataTypes, IReadOnlyList<string> StandardAliases);
 
 public sealed record BlueprintResultDto(Blueprint Blueprint, IReadOnlyList<BlueprintIssue> Issues);
 
+/// <summary>The blueprint editor's API. Blueprints are addressed by their stable id.</summary>
 public static class BlueprintEndpoints
 {
+    /// <summary>Publishes every valid blueprint of the store into the library and removes the rest. Returns the published names.</summary>
     public static IReadOnlyList<string> LoadInto(CmLibrary library, BlueprintStore store)
     {
+        var all = store.All();
+        var byId = all.GroupBy(b => b.Id).ToDictionary(g => g.Key, g => g.First());
+        foreach (var type in library.Types.ToList().Where(t => !byId.ContainsKey(t.Id)))
+            library.Remove(type.Id);
         var loaded = new List<string>();
-        foreach (var blueprint in store.All())
-            if (Publish(library, store, blueprint))
-                loaded.Add(blueprint.Name);
+        foreach (var blueprint in byId.Values)
+        {
+            if (BlueprintValidator.Validate(blueprint.Clone(), id => byId.GetValueOrDefault(id)).Any(i => i.Severity == "Error"))
+            {
+                library.Remove(blueprint.Id);
+                continue;
+            }
+            library.Replace(BlueprintTypes.ToCmType(blueprint.Clone()));
+            loaded.Add(blueprint.Name);
+        }
         return loaded;
     }
 
-    private static bool Publish(CmLibrary library, BlueprintStore store, Blueprint blueprint)
+    private static Func<Guid, Blueprint?> Lookup(BlueprintStore store)
     {
-        if (BlueprintValidator.Validate(blueprint, store.Find).Any(i => i.Severity == "Error"))
-            return false;
-        library.Replace(BlueprintTypes.ToCmType(blueprint));
-        return true;
+        var all = store.All().GroupBy(b => b.Id).ToDictionary(g => g.Key, g => g.First());
+        return id => all.GetValueOrDefault(id);
     }
+
+    private static BlueprintResultDto Result(Blueprint blueprint, BlueprintStore store) => new(blueprint, BlueprintValidator.Validate(blueprint, Lookup(store)));
 
     public static void MapBlueprintApi(this WebApplication app)
     {
         var group = app.MapGroup("/api/blueprints");
 
-        group.MapGet("/catalog", () => new BlueprintCatalogDto(BlueprintCatalog.Interfaces, BlueprintCatalog.Categories,
-            BlueprintCatalog.Groups, BlueprintCatalog.DataTypes));
+        group.MapGet("/catalog", () => new BlueprintCatalogDto(BlueprintCatalog.Interfaces, BlueprintRules.Categories,
+            BlueprintRules.Groups, BlueprintRules.DataTypes, [.. UniversalStates.StandardAliases.Keys]));
 
-        group.MapGet("", (BlueprintStore store) => store.All().Select(b =>
+        group.MapGet("", (BlueprintStore store) =>
         {
-            var issues = BlueprintValidator.Validate(b, store.Find);
-            return new BlueprintSummaryDto(b.Name, b.Kind.ToString(), b.Version, b.Description,
-                issues.Count(i => i.Severity == "Error"), issues.Count(i => i.Severity == "Warning"));
-        }).ToList());
+            var lookup = Lookup(store);
+            return store.All().Select(b =>
+            {
+                var issues = BlueprintValidator.Validate(b, lookup);
+                return new BlueprintSummaryDto(b.Id, b.Name, b.Kind.ToString(), b.Version.ToString(), b.Description,
+                    issues.Count(i => i.Severity == "Error"), issues.Count(i => i.Severity == "Warning"));
+            }).ToList();
+        });
 
-        group.MapGet("/{name}", (string name, BlueprintStore store) => Guarded(() =>
-            store.Find(name) is { } b ? Results.Ok(new BlueprintResultDto(b, BlueprintValidator.Validate(b, store.Find))) : NotFound(name)));
+        group.MapGet("/{id:guid}", (Guid id, BlueprintStore store) =>
+            store.Find(id) is { } b ? Results.Ok(Result(b, store)) : NotFound(id));
 
         group.MapPost("/validate", (Blueprint blueprint, BlueprintStore store) =>
         {
-            BlueprintCatalog.AssignCodes(blueprint);
-            return new BlueprintResultDto(blueprint, BlueprintValidator.Validate(blueprint, store.Find));
+            BlueprintRules.AssignCodes(blueprint);
+            return Result(blueprint, store);
         });
 
-        group.MapPut("/{name}", (string name, Blueprint blueprint, BlueprintStore store, CmLibrary library) => Guarded(() =>
+        group.MapPost("", (Blueprint blueprint, BlueprintStore store, CmLibrary library) => Guarded(() =>
         {
-            var exists = store.Find(name) is not null;
-            if (!name.Equals(blueprint.Name, StringComparison.OrdinalIgnoreCase) && store.Find(blueprint.Name) is not null)
-                return Error(409, "blueprint_exists", $"A blueprint named '{blueprint.Name}' already exists.");
-            var issues = BlueprintValidator.Validate(blueprint, store.Find);
-            if (issues.Any(i => i.Where == "General" && i.Severity == "Error"))
-                return Error(400, "invalid_blueprint", issues.First(i => i.Where == "General").Message);
-            store.Save(exists ? name : null, blueprint);
-            if (exists && !name.Equals(blueprint.Name, StringComparison.OrdinalIgnoreCase))
-                library.Remove(name);
-            Publish(library, store, blueprint);
-            return Results.Ok(new BlueprintResultDto(blueprint, BlueprintValidator.Validate(blueprint, store.Find)));
+            if (blueprint.Id != Guid.Empty && store.Find(blueprint.Id) is not null)
+                return Error(409, "blueprint_exists", $"A blueprint with id {blueprint.Id} already exists; save it with PUT.");
+            return Save(blueprint, store, library, created: true);
         }));
 
-        group.MapDelete("/{name}", (string name, BlueprintStore store, CmLibrary library) => Guarded(() =>
+        group.MapPut("/{id:guid}", (Guid id, Blueprint blueprint, BlueprintStore store, CmLibrary library) => Guarded(() =>
         {
-            if (!store.Delete(name))
-                return NotFound(name);
-            library.Remove(name);
+            if (blueprint.Id != Guid.Empty && blueprint.Id != id)
+                return Error(400, "invalid_blueprint", "The blueprint's id does not match the address.");
+            blueprint.Id = id;
+            return Save(blueprint, store, library, created: false);
+        }));
+
+        group.MapDelete("/{id:guid}", (Guid id, BlueprintStore store, CmLibrary library) => Guarded(() =>
+        {
+            if (!store.Delete(id))
+                return NotFound(id);
+            LoadInto(library, store);
             return Results.NoContent();
         }));
+    }
+
+    private static IResult Save(Blueprint blueprint, BlueprintStore store, CmLibrary library, bool created)
+    {
+        if (store.FindByName(blueprint.Name) is { } other && other.Id != blueprint.Id)
+            return Error(409, "blueprint_exists", $"A blueprint named '{blueprint.Name}' already exists.");
+        var issues = BlueprintValidator.Validate(blueprint, Lookup(store));
+        if (issues.FirstOrDefault(i => i.Where == "General" && i.Severity == "Error") is { } general)
+            return Error(400, "invalid_blueprint", general.Message);
+        store.Save(blueprint);
+        LoadInto(library, store);
+        var result = Result(blueprint, store);
+        return created ? Results.Created($"/api/blueprints/{blueprint.Id}", result) : Results.Ok(result);
     }
 
     private static IResult Guarded(Func<IResult> action)
@@ -89,7 +121,7 @@ public static class BlueprintEndpoints
         }
     }
 
-    private static IResult NotFound(string name) => Error(404, "blueprint_not_found", $"Blueprint '{name}' does not exist.");
+    private static IResult NotFound(Guid id) => Error(404, "blueprint_not_found", $"Blueprint {id} does not exist.");
 
     private static IResult Error(int status, string code, string message) =>
         Results.Json(new { code, message }, statusCode: status);

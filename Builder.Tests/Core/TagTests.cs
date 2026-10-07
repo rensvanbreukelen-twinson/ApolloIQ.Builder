@@ -10,7 +10,7 @@ public class TagTests
     {
         var project = new Project();
         var pms = project.AddFolder("PMS");
-        var gen1 = project.AddControlModule("GEN1", pms.Id, "GenSet", "1.0.0");
+        var gen1 = project.AddControlModule("GEN1", pms.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         return (project, gen1);
     }
 
@@ -89,7 +89,7 @@ public class TagTests
             Guid.Parse("33333333-3333-3333-aaaa-000000000002")]);
         var project = new Project(newId: ids.Dequeue);
         var pms = project.AddFolder("PMS");
-        var gen1 = project.AddControlModule("GEN1", pms.Id, "GenSet", "1.0.0");
+        var gen1 = project.AddControlModule("GEN1", pms.Id, Guid.NewGuid(), ApolloIQ.Core.Versioning.BlueprintVersion.Initial);
         var a = project.AddTag(gen1.Id, State);
         var b = project.AddTag(gen1.Id, new TagDefinition("enabled", TagGroup.Sts, TagDataType.Bool, TagDirection.In));
         Assert.Equal("T_3333333333333", b.SymbolKey[..15]);

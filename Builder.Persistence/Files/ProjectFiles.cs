@@ -1,7 +1,8 @@
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using ApolloIQ.Core.Conventions;
+using ApolloIQ.Core.Versioning;
 using Builder.Core.Model;
-using Builder.Persistence.Export;
 
 namespace Builder.Persistence.Files;
 
@@ -11,14 +12,6 @@ public sealed class ProjectFile
     [JsonPropertyOrder(1)] public Guid Id { get; set; }
     [JsonPropertyOrder(2)] public string Name { get; set; } = "";
     [JsonPropertyOrder(3)] public int MaxNameLength { get; set; }
-    [JsonPropertyOrder(4)] public HmiExportFile? HmiExport { get; set; }
-}
-
-public sealed class HmiExportFile
-{
-    [JsonPropertyOrder(0)] public Guid? ConnectionId { get; set; }
-    [JsonPropertyOrder(1)] public int ScanRateMs { get; set; } = HmiExportProfile.DefaultScanRateMs;
-    [JsonPropertyOrder(2)] public string Address { get; set; } = nameof(HmiAddressMode.Path);
 }
 
 public sealed class FolderFile
@@ -35,14 +28,12 @@ public sealed class ControlModuleFile
     [JsonPropertyOrder(1)] public Guid Id { get; set; }
     [JsonPropertyOrder(2)] public string Name { get; set; } = "";
     [JsonPropertyOrder(3)] public Guid? ParentId { get; set; }
-    [JsonPropertyOrder(4)] public string Type { get; set; } = "";
-    [JsonPropertyOrder(5)] public string TypeVersion { get; set; } = "";
-    [JsonPropertyOrder(6)] public List<string> OptionalTags { get; set; } = [];
+    [JsonPropertyOrder(4)] public Guid BlueprintId { get; set; }
+    [JsonPropertyOrder(5)] public BlueprintVersion BlueprintVersion { get; set; } = BlueprintVersion.Initial;
     [JsonPropertyOrder(7)] public List<TagEntry> Tags { get; set; } = [];
     [JsonPropertyOrder(8)] public List<InterlockEntry>? Interlocks { get; set; }
-    [JsonPropertyOrder(9)] public SortedDictionary<string, int>? AlarmSeverity { get; set; }
+    [JsonPropertyOrder(9)] public SortedDictionary<string, int>? AlarmPriority { get; set; }
     [JsonPropertyOrder(10)] public List<WireEntry>? Wires { get; set; }
-    [JsonPropertyOrder(11)] public PicEntry? Pic { get; set; }
     [JsonPropertyOrder(12)] public Guid? ExecutionDeviceId { get; set; }
     [JsonPropertyOrder(13)] public CommandInputConfig? CommandInputs { get; set; }
 }
@@ -53,8 +44,8 @@ public sealed class UnitFile
     [JsonPropertyOrder(1)] public Guid Id { get; set; }
     [JsonPropertyOrder(2)] public string Name { get; set; } = "";
     [JsonPropertyOrder(3)] public Guid? ParentId { get; set; }
-    [JsonPropertyOrder(4)] public string Blueprint { get; set; } = "";
-    [JsonPropertyOrder(5)] public string BlueprintVersion { get; set; } = "";
+    [JsonPropertyOrder(4)] public Guid BlueprintId { get; set; }
+    [JsonPropertyOrder(5)] public BlueprintVersion BlueprintVersion { get; set; } = BlueprintVersion.Initial;
     [JsonPropertyOrder(5)][JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool EquipmentModule { get; set; }
     [JsonPropertyOrder(6)] public SortedDictionary<string, Guid> Members { get; set; } = new(StringComparer.Ordinal);
     [JsonPropertyOrder(7)] public List<TagEntry> Tags { get; set; } = [];
@@ -82,8 +73,9 @@ public sealed class InterlockEntry
     [JsonPropertyOrder(2)] public string Condition { get; set; } = "";
     [JsonPropertyOrder(3)] public string Text { get; set; } = "";
     [JsonPropertyOrder(4)] public string? Alarm { get; set; }
-    [JsonPropertyOrder(5)] public int? Severity { get; set; }
-    [JsonPropertyOrder(6)] public string? Escalate { get; set; }
+    [JsonPropertyOrder(5)] public Guid? AlarmId { get; set; }
+    [JsonPropertyOrder(6)] public int? Priority { get; set; }
+    [JsonPropertyOrder(7)] public string? Escalate { get; set; }
 
     public static List<InterlockEntry>? From(IReadOnlyList<InterlockRule> rules) => rules.Count == 0 ? null : rules.Select(r => new InterlockEntry
     {
@@ -92,7 +84,8 @@ public sealed class InterlockEntry
         Condition = r.Condition,
         Text = r.Text,
         Alarm = r.Kind == InterlockKind.Trip ? r.Alarm : null,
-        Severity = r.Kind == InterlockKind.Trip ? r.Severity : null,
+        AlarmId = r.Kind == InterlockKind.Trip ? r.AlarmId : null,
+        Priority = r.Kind == InterlockKind.Trip ? r.Priority : null,
         Escalate = r.Kind == InterlockKind.Trip && r.Escalate != TripEscalation.None ? r.Escalate.ToString() : null
     }).ToList();
 
@@ -104,7 +97,8 @@ public sealed class InterlockEntry
         Condition = Condition,
         Text = Text,
         Alarm = Alarm,
-        Severity = Severity ?? Builder.Core.Types.SeverityBands.DefaultSeverity,
+        AlarmId = AlarmId,
+        Priority = Priority ?? ApolloIQ.Core.Conventions.AlarmPriority.Default,
         Escalate = Escalate is null ? TripEscalation.None
             : Enum.TryParse<TripEscalation>(Escalate, true, out var e) && Enum.IsDefined(e) ? e : throw new ProjectException(ProjectErrors.InvalidInterlock, $"Unknown escalation '{Escalate}'.")
     };
@@ -162,21 +156,4 @@ public sealed class WireEntry
     [JsonPropertyOrder(0)] public Guid Source { get; set; }
     [JsonPropertyOrder(1)] public string Mode { get; set; } = "";
     [JsonPropertyOrder(2)] public string? Command { get; set; }
-}
-
-public sealed class PicEntry
-{
-    [JsonPropertyOrder(0)] public string OnLabel { get; set; } = "";
-    [JsonPropertyOrder(1)] public string OffLabel { get; set; } = "";
-    [JsonPropertyOrder(2)] public List<PicRowEntry> Rows { get; set; } = [];
-}
-
-public sealed class PicRowEntry
-{
-    [JsonPropertyOrder(0)] public string Name { get; set; } = "";
-    [JsonPropertyOrder(1)] public string Source { get; set; } = "";
-    [JsonPropertyOrder(2)] public string Kind { get; set; } = "";
-    [JsonPropertyOrder(3)] public int? On { get; set; }
-    [JsonPropertyOrder(4)] public int? Off { get; set; }
-    [JsonPropertyOrder(5)] public string InAuto { get; set; } = "";
 }

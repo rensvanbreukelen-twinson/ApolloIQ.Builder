@@ -1,0 +1,110 @@
+{
+  "schema": "apolloiq.scenarios/1",
+  "type": "PushButton",
+  "scenarios": [
+    {
+      "name": "Press and release",
+      "steps": [
+        {
+          "run": 1
+        },
+        {
+          "expect": "[STS.state] == Released"
+        },
+        {
+          "force": {
+            "FIN.pressed": true
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "[STS.state] == Pressed"
+        },
+        {
+          "force": {
+            "FIN.pressed": false
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "[STS.state] == Released"
+        },
+        {
+          "bad": "FIN.pressed"
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "[STS.state] == Unavailable"
+        },
+        {
+          "good": "FIN.pressed"
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "[STS.state] == Released"
+        },
+        {
+          "force": {
+            "STS.enabled": false
+          }
+        },
+        {
+          "run": 1
+        },
+        {
+          "expect": "[STS.state] == Unavailable"
+        },
+        {
+          "release": "STS.enabled"
+        },
+        {
+          "force": {
+            "FIN.pressed": true
+          }
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "[STS.state] == Pressed"
+        }
+      ]
+    },
+    {
+      "name": "A button held too long goes to Fault",
+      "steps": [
+        {
+          "run": 1
+        },
+        {
+          "force": {
+            "FIN.pressed": true
+          }
+        },
+        {
+          "run": "10.2 s"
+        },
+        {
+          "expect": "[ALM.Button_Stick.active]"
+        },
+        {
+          "release": "FIN.pressed"
+        },
+        {
+          "run": 2
+        },
+        {
+          "expect": "[STS.state] == Released"
+        }
+      ]
+    }
+  ]
+}

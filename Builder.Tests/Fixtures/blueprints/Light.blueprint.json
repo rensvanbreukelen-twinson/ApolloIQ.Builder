@@ -1,0 +1,272 @@
+{
+  "schema": "apolloiq.blueprint/1",
+  "id": "0b1e0000-0000-4000-8000-000000000001",
+  "kind": "CM",
+  "name": "Light",
+  "version": "0.1.0",
+  "description": "A light with lamp current feedback (test fixture).",
+  "interfaces": [
+    "Base",
+    "Switchable",
+    "Resettable",
+    "Interlocks"
+  ],
+  "tags": [
+    {
+      "id": "d459682a-c061-52ed-9f52-dd5686af5774",
+      "group": "FIN",
+      "name": "feedback",
+      "dataType": "Bool",
+      "description": "Lamp current detected",
+      "source": "LocalIO"
+    },
+    {
+      "id": "a5deed40-f815-5d53-8e5f-1339b8e03fe6",
+      "group": "FIN",
+      "name": "current",
+      "dataType": "Real",
+      "description": "Lamp current",
+      "unit": "A",
+      "source": "External"
+    },
+    {
+      "id": "dbe5cfe8-f388-5770-bfd6-078ae1492dca",
+      "group": "OUT",
+      "name": "lamp",
+      "dataType": "Bool",
+      "description": "Lamp coil"
+    },
+    {
+      "id": "f64b0438-b694-5454-b14e-e227f3182004",
+      "group": "PAR",
+      "name": "max_switch_time",
+      "dataType": "Real",
+      "description": "Maximum time to switch",
+      "unit": "s",
+      "initial": "2"
+    },
+    {
+      "id": "cd41e66e-7bb1-5bca-a47b-1eea4d696aff",
+      "group": "PAR",
+      "name": "max_current",
+      "dataType": "Real",
+      "description": "Lamp current alarm limit",
+      "unit": "A",
+      "initial": "5"
+    },
+    {
+      "id": "466b2599-ac59-51a8-8707-838fc971e798",
+      "group": "INT",
+      "name": "feedback",
+      "dataType": "Bool",
+      "description": "Conditioned feedback"
+    }
+  ],
+  "states": [
+    {
+      "name": "Off",
+      "category": 200,
+      "initial": true,
+      "run": [
+        {
+          "tag": "OUT.lamp",
+          "value": "FALSE"
+        }
+      ]
+    },
+    {
+      "name": "TurningOn",
+      "text": "Turning on",
+      "category": 300,
+      "run": [
+        {
+          "tag": "OUT.lamp",
+          "value": "TRUE"
+        }
+      ],
+      "timeout": {
+        "time": "[PAR.max_switch_time]",
+        "goTo": "Broken",
+        "alarm": "DoesNotSwitchOn",
+        "alarmId": "7160cb9e-ccf5-51f6-af19-70dd41e81ce9",
+        "priority": 20
+      }
+    },
+    {
+      "name": "On",
+      "category": 400,
+      "run": [
+        {
+          "tag": "OUT.lamp",
+          "value": "TRUE"
+        }
+      ]
+    },
+    {
+      "name": "TurningOff",
+      "text": "Turning off",
+      "category": 100,
+      "run": [
+        {
+          "tag": "OUT.lamp",
+          "value": "FALSE"
+        }
+      ],
+      "timeout": {
+        "time": "[PAR.max_switch_time]",
+        "goTo": "Broken"
+      }
+    },
+    {
+      "name": "Broken",
+      "text": "Lamp broken",
+      "category": 500,
+      "run": [
+        {
+          "tag": "OUT.lamp",
+          "value": "FALSE"
+        }
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "name": "switch_on",
+      "from": [
+        "Off"
+      ],
+      "to": "TurningOn",
+      "guard": "[CMD.set_on] && [LOK.can_on]",
+      "priority": 10
+    },
+    {
+      "name": "is_on",
+      "from": [
+        "TurningOn"
+      ],
+      "to": "On",
+      "guard": "[INT.feedback]",
+      "priority": 10
+    },
+    {
+      "name": "switch_off",
+      "from": [
+        "On"
+      ],
+      "to": "TurningOff",
+      "guard": "[CMD.set_off] && [LOK.can_off] || [LOK.trip]",
+      "priority": 10
+    },
+    {
+      "name": "is_off",
+      "from": [
+        "TurningOff"
+      ],
+      "to": "Off",
+      "guard": "![INT.feedback]",
+      "priority": 10
+    },
+    {
+      "name": "reset",
+      "from": [
+        "Broken"
+      ],
+      "to": "Off",
+      "guard": "[CMD.reset]",
+      "priority": 10
+    }
+  ],
+  "always": [
+    {
+      "tag": "INT.feedback",
+      "value": "[FIN.feedback]"
+    },
+    {
+      "tag": "STS.remote_ok",
+      "value": "[STS.enabled]"
+    }
+  ],
+  "alarms": [
+    {
+      "id": "59b78f4d-4ff7-5d04-bf2f-ad0add925bfa",
+      "name": "LampFailure",
+      "priority": 10,
+      "message": "{instance_name}: lamp failure",
+      "trigger": "State",
+      "plcReactive": false,
+      "condition": "[STS.state] == On && ![INT.feedback]",
+      "onDelaySeconds": 1,
+      "latched": false
+    },
+    {
+      "id": "8bd09240-5e56-5188-a312-c0fa05c6492c",
+      "name": "Overcurrent",
+      "priority": 22,
+      "message": "{instance_name}: lamp current high",
+      "trigger": "Range",
+      "plcReactive": false,
+      "input": "[FIN.current]",
+      "highWarning": "4",
+      "highAlarm": "[PAR.max_current]",
+      "latched": false
+    },
+    {
+      "id": "f9cf6212-69cc-569b-83f3-dca4359f968f",
+      "name": "SlowSwitch",
+      "priority": 5,
+      "message": "{instance_name}: slow to switch on",
+      "trigger": "Timeout",
+      "plcReactive": false,
+      "timeoutMode": "Running",
+      "running": "[STS.state] == TurningOn",
+      "condition": "[INT.feedback]",
+      "timeout": "0.5",
+      "latched": false
+    },
+    {
+      "id": "7d8adb28-6867-5907-9f79-1e543bf1ee7b",
+      "name": "CurrentWhileOff",
+      "priority": 15,
+      "message": "{instance_name}: current while off",
+      "trigger": "State",
+      "plcReactive": true,
+      "condition": "[STS.state] == Off && [FIN.current] > 0.5",
+      "latched": true
+    }
+  ],
+  "plant": [
+    {
+      "tag": "FIN.feedback",
+      "value": "[OUT.lamp]"
+    }
+  ],
+  "commandInputs": {
+    "rows": [
+      {
+        "name": "HMI",
+        "source": "Hmi",
+        "kind": "Pulse",
+        "drives": "OnOff",
+        "on": 1,
+        "off": 1,
+        "inAuto": "Ignore",
+        "location": "Any",
+        "commands": [
+          "reset"
+        ]
+      },
+      {
+        "name": "BOARD",
+        "source": "DigitalInput",
+        "kind": "Button",
+        "drives": "Toggle",
+        "on": 1,
+        "off": 1,
+        "inAuto": "Always",
+        "location": "Any",
+        "debounce": 0.05
+      }
+    ],
+    "level": false
+  }
+}

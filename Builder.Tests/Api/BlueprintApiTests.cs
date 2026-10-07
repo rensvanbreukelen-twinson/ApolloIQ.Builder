@@ -12,39 +12,59 @@ public class BlueprintApiTests
 
     private sealed record Result(Blueprint Blueprint, List<BlueprintIssue> Issues);
 
-    private sealed record Summary(string Name, string Kind, int Errors, int Warnings);
+    private sealed record Summary(Guid Id, string Name, string Kind, string Version, int Errors, int Warnings);
 
     [Fact]
-    public async Task BlueprintsAreSavedListedRenamedAndDeleted()
+    public async Task BlueprintsAreCreatedListedRenamedAndDeletedById()
     {
-        await using var server = await ApiServer.StartAsync();
+        await using var server = await ApiServer.StartAsync(fixtures: false);
         try
         {
-            var light = JsonSerializer.Deserialize<Blueprint>(
-                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "blueprints", "Light.blueprint.json")), Blueprint.Json)!;
-            var saved = await server.Client.PutAsJsonAsync("/api/blueprints/Light", light, ApiServer.Json, Ct);
-            Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+            var light = Fixtures.Load("Light");
+            light.Id = Guid.Empty;
+            light.Tags.ForEach(t => t.Id = Guid.Empty);
+            light.Tags.Add(new BlueprintTag { Group = "PAR", Name = "spare", DataType = "Real" });
+            var created = await server.Client.PostAsJsonAsync("/api/blueprints", light, ApiServer.Json, Ct);
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            var saved = (await created.Content.ReadFromJsonAsync<Result>(ApiServer.Json, Ct))!.Blueprint;
+            Assert.NotEqual(Guid.Empty, saved.Id);
+            Assert.DoesNotContain(saved.Tags, t => t.Id == Guid.Empty);
             Assert.True(File.Exists(Path.Combine(server.ProjectsRoot, "blueprints", "Light.blueprint.json")));
+            var file = await File.ReadAllTextAsync(Path.Combine(server.ProjectsRoot, "blueprints", "Light.blueprint.json"), Ct);
+            Assert.Contains("\"version\": \"0.1.0\"", file);
+            Assert.Contains("\"plcReactive\": true", file);
 
             var list = await server.Get<List<Summary>>("/api/blueprints");
-            Assert.Equal(("Light", 0), (list.Single().Name, list.Single().Errors));
+            Assert.Equal(("Light", 0, saved.Id, "0.1.0"), (list.Single().Name, list.Single().Errors, list.Single().Id, list.Single().Version));
+            Assert.Single(await server.Get<List<JsonElement>>("/api/library/types"));
 
-            light.Tags[0].Source = null;
-            var checkedResult = await server.Post<Result>("/api/blueprints/validate", light);
+            saved.Tags[0].Source = null;
+            var checkedResult = await server.Post<Result>("/api/blueprints/validate", saved);
             Assert.Contains(checkedResult.Issues, i => i.Severity == "Error");
 
-            light.Name = "DeckLight";
-            (await server.Client.PutAsJsonAsync("/api/blueprints/Light", light, ApiServer.Json, Ct)).EnsureSuccessStatusCode();
-            var loaded = await server.Get<Result>("/api/blueprints/DeckLight");
-            Assert.Equal("DeckLight", loaded.Blueprint.Name);
-            Assert.Equal(HttpStatusCode.NotFound, (await server.Client.GetAsync("/api/blueprints/Light", Ct)).StatusCode);
+            saved.Tags[0].Source = InputSource.LocalIO;
+            var tagId = saved.Tags[^1].Id;
+            saved.Name = "DeckLight";
+            saved.Tags[^1].Name = "reserve";
+            saved.Version = saved.Version.NextMinor();
+            (await server.Client.PutAsJsonAsync($"/api/blueprints/{saved.Id}", saved, ApiServer.Json, Ct)).EnsureSuccessStatusCode();
+            var loaded = await server.Get<Result>($"/api/blueprints/{saved.Id}");
+            Assert.Equal(("DeckLight", saved.Id, tagId, "0.1.1"), (loaded.Blueprint.Name, loaded.Blueprint.Id, loaded.Blueprint.Tags.Single(t => t.Name == "reserve").Id, loaded.Blueprint.Version.ToString()));
+            Assert.False(File.Exists(Path.Combine(server.ProjectsRoot, "blueprints", "Light.blueprint.json")));
+            Assert.Equal("DeckLight", Assert.Single(await server.Get<List<JsonElement>>("/api/library/types")).GetProperty("name").GetString());
+
+            var clash = Fixtures.Load("PushButton");
+            clash.Name = "DeckLight";
+            Assert.Equal(HttpStatusCode.Conflict, (await server.Client.PostAsJsonAsync("/api/blueprints", clash, ApiServer.Json, Ct)).StatusCode);
 
             var catalog = await server.Get<JsonElement>("/api/blueprints/catalog");
             Assert.Equal(6, catalog.GetProperty("interfaces").GetArrayLength());
+            Assert.Contains(catalog.GetProperty("interfaces").EnumerateArray(), i => i.GetProperty("name").GetString() == "Container" && !i.GetProperty("inScada").GetBoolean());
 
-            Assert.Equal(HttpStatusCode.NoContent, (await server.Client.DeleteAsync("/api/blueprints/DeckLight", Ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await server.Client.DeleteAsync($"/api/blueprints/{saved.Id}", Ct)).StatusCode);
             Assert.Empty(await server.Get<List<Summary>>("/api/blueprints"));
-            Assert.Equal(HttpStatusCode.BadRequest, (await server.Client.GetAsync("/api/blueprints/..%2Fx", Ct)).StatusCode);
+            Assert.Empty(await server.Get<List<JsonElement>>("/api/library/types"));
+            Assert.Equal(HttpStatusCode.NotFound, (await server.Client.GetAsync($"/api/blueprints/{saved.Id}", Ct)).StatusCode);
         }
         finally
         {

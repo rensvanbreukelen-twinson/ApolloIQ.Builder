@@ -1,7 +1,7 @@
 using Builder.Core.Model;
 using Builder.Core.Tags;
 using Builder.Core.Types;
-using Builder.Logic.Expressions;
+using ApolloIQ.Core.Expressions;
 using Builder.Logic.Runtime;
 
 namespace Builder.Simulator.Scenarios;
@@ -32,9 +32,11 @@ public sealed class ScenarioRunner(CmLibrary library, double cycleSeconds = Logi
                 var parent = instance.Parent is { } p
                     ? created.TryGetValue(p, out var pid) ? pid : throw new ProjectException(ProjectErrors.NotFound, $"Parent '{p}' must be listed before its members.")
                     : folder.Id;
-                created[instance.Name] = library.Find(instance.Type)?.IsUnit == true
-                    ? InstanceFactory.CreateUnit(project, library, instance.Type, instance.Name, parent).Id
-                    : InstanceFactory.Create(project, library, instance.Type, instance.Name, parent, instance.OptionalTags).Id;
+                var type = library.FindByName(instance.Type)
+                           ?? throw new ProjectException(ProjectErrors.NotFound, $"Blueprint '{instance.Type}' does not exist or has errors.");
+                created[instance.Name] = type.IsUnit
+                    ? InstanceFactory.CreateUnit(project, library, type.Id, instance.Name, parent).Id
+                    : InstanceFactory.Create(project, library, type.Id, instance.Name, parent).Id;
             }
             catch (ProjectException ex)
             {
@@ -63,19 +65,7 @@ public sealed class ScenarioRunner(CmLibrary library, double cycleSeconds = Logi
             try
             {
                 var cm = project.Get(created[instance.Name]);
-                CommandInputBehaviour.Configure(project, library, cm.Id, PicJson.ReadInputs(instance.CommandInputs!.Value));
-            }
-            catch (Exception ex) when (ex is ProjectException or System.Text.Json.JsonException or InvalidOperationException)
-            {
-                failures.Add(new ScenarioFailure(0, "instances", $"{instance.Name}: {ex.Message}"));
-            }
-        }
-        foreach (var instance in scenario.Instances.Where(i => i.Pic is not null))
-        {
-            try
-            {
-                var cm = project.Objects.OfType<ControlModule>().Single(c => c.Name == instance.Name);
-                PicBehaviour.Configure(project, cm.Id, PicJson.Read(instance.Pic!.Value));
+                CommandInputBehaviour.Configure(project, library, cm.Id, ReadInputs(instance.CommandInputs!.Value));
             }
             catch (Exception ex) when (ex is ProjectException or System.Text.Json.JsonException or InvalidOperationException)
             {
@@ -217,7 +207,7 @@ public sealed class ScenarioRunner(CmLibrary library, double cycleSeconds = Logi
         var coverage = new List<TypeCoverage>();
         foreach (var typeName in hits.Select(h => h.Type).Concat(results.Select(r => r.Type)).Distinct().Order(StringComparer.Ordinal))
         {
-            var type = library.Find(typeName);
+            var type = library.FindByName(typeName);
             if (type is null)
                 continue;
             var project = new Project();
@@ -237,8 +227,8 @@ public sealed class ScenarioRunner(CmLibrary library, double cycleSeconds = Logi
     private Guid Instantiate(Project project, CmType type, string name, Guid parentId)
     {
         if (!type.IsUnit)
-            return InstanceFactory.Create(project, library, type.Name, name, parentId, type.OptionalTags.Select(t => $"{t.Group.Code()}.{t.Name}")).Id;
-        var unit = InstanceFactory.CreateUnit(project, library, type.Name, name, parentId);
+            return InstanceFactory.Create(project, library, type.Id, name, parentId).Id;
+        var unit = InstanceFactory.CreateUnit(project, library, type.Id, name, parentId);
         foreach (var (role, memberType) in type.Roles)
         {
             if (library.Find(memberType) is not { } member)
@@ -248,6 +238,14 @@ public sealed class ScenarioRunner(CmLibrary library, double cycleSeconds = Logi
         }
         return unit.Id;
     }
+
+    private static readonly System.Text.Json.JsonSerializerOptions InputJson = new(System.Text.Json.JsonSerializerDefaults.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
+    private static CommandInputConfig ReadInputs(System.Text.Json.JsonElement element) =>
+        System.Text.Json.JsonSerializer.Deserialize<CommandInputConfig>(element, InputJson) ?? throw new System.Text.Json.JsonException("A command input configuration is required.");
 
     private static string Name(CmProgram program, (int From, int To) range) =>
         range.From == int.MinValue ? "*" : program.StateName(range.From);
