@@ -11,7 +11,7 @@ type Props = {
   tree: TreeNode[]
   maxLength: number
   initialParentId: string | null
-  onSubmit: (type: string, name: string, parentId: string | null, optionalTags: string[]) => Promise<void>
+  onSubmit: (blueprintId: string, name: string, parentId: string | null) => Promise<void>
   onClose: () => void
 }
 
@@ -19,36 +19,27 @@ export function CmWizard({ types, tree, maxLength, initialParentId, onSubmit, on
   const [type, setType] = useState<CmType | null>(null)
   const [name, setName] = useState('')
   const [parentId, setParentId] = useState<string | null>(initialParentId)
-  const [optional, setOptional] = useState<Set<string>>(new Set())
   const { errors, busy, submit, clearErrors } = useSubmit()
   const valid = type !== null && checkName(name, maxLength) === null
 
-  const toggle = (key: string) =>
-    setOptional((current) => {
-      const next = new Set(current)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-
   const create = () => {
-    if (valid && !busy) void submit(() => onSubmit(type.name, name, parentId, [...optional]))
+    if (valid && !busy) void submit(() => onSubmit(type.id, name, parentId))
   }
 
   if (type === null) {
     return (
       <Modal title="New control module · 1 of 2: type" onClose={onClose} wide
         footer={<button className="button" onClick={onClose}>Cancel</button>}>
-        {types.length === 0 && <p>No CM types are loaded. Check the library folder.</p>}
+        {types.length === 0 && <p>No CM blueprints yet. Make one in the Blueprints tab; blueprints without errors appear here.</p>}
         <ul className="type-list">
           {types.map((t) => (
-            <li key={t.name}>
+            <li key={t.id}>
               <button className="type-card" onClick={() => setType(t)}>
                 <span className="type-name">{t.name}</span>
                 <span className="type-version">v{t.version}</span>
                 <span className="type-description">{t.description}</span>
                 <span className="type-meta">
-                  {t.tagCount} tags{t.optionalTags.length > 0 ? ` + ${t.optionalTags.length} optional` : ''}
+                  {t.tagCount} tags
                 </span>
               </button>
             </li>
@@ -77,22 +68,8 @@ export function CmWizard({ types, tree, maxLength, initialParentId, onSubmit, on
           onChange={(value) => { setName(value); clearErrors() }} />
         <ParentSelect label="Place" tree={tree} value={parentId} error={errors.parentId} allow={['folder', 'unit', 'equipmentModule']}
           onChange={(value) => { setParentId(value); clearErrors() }} />
-        {type.optionalTags.length > 0 && (
-          <fieldset className="field">
-            <legend className="field-label">Optional tags</legend>
-            <div className="checkbox-list">
-              {type.optionalTags.map((tag) => (
-                <label key={tag.key} className="checkbox">
-                  <input type="checkbox" checked={optional.has(tag.key)} onChange={() => toggle(tag.key)} />
-                  <code>{tag.key}</code>
-                  <span className="muted">{tag.description}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        )}
         <p className="muted">
-          Creates {type.tagCount + type.optionalTags.filter((t) => optional.has(t.key)).reduce((sum, t) => sum + t.addsTags, 0)} tags
+          Creates {type.tagCount} tags plus those of its command inputs
           {name && !checkName(name, maxLength) ? ` under ${[parentPath(tree, parentId), name].filter(Boolean).join('.')}` : ''}.
         </p>
         {errors.form && <p className="form-error">{errors.form}</p>}

@@ -71,6 +71,7 @@ public sealed class BlueprintTag
     public InputSource? Source { get; set; }
     public bool Primary { get; set; }
 
+    [JsonIgnore]
     public string Key => $"{Group}.{Name}";
 }
 

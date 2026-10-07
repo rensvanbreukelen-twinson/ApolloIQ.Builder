@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api/client'
-import type { CmType, LibraryError, Project, ProjectSummary, TreeNode } from './api/types'
+import type { CmType, Project, ProjectSummary, TreeNode } from './api/types'
 import { AlarmsDialog } from './components/AlarmsDialog'
 import { BlueprintPanel } from './components/BlueprintPanel'
 import { CmWizard } from './components/CmWizard'
@@ -54,12 +54,10 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null)
   const [tree, setTree] = useState<TreeNode[]>([])
   const [types, setTypes] = useState<CmType[]>([])
-  const [libraryErrors, setLibraryErrors] = useState<LibraryError[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [examples, setExamples] = useState<{ file: string; name: string; description: string }[]>([])
   const [view, setView] = useState<'tags' | 'configurator' | 'simulator' | 'scenarios' | 'topology' | 'blueprints'>('tags')
 
   const openProject = useCallback(async (id: string) => {
@@ -71,12 +69,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    api.examples().then(setExamples).catch(() => undefined)
-    Promise.all([api.projects(), api.types(), api.libraryErrors()])
-      .then(async ([list, loadedTypes, errors]) => {
+    Promise.all([api.projects(), api.types()])
+      .then(async ([list, loadedTypes]) => {
         setProjects(list)
         setTypes(loadedTypes)
-        setLibraryErrors(errors)
         const remembered = rememberedProject()
         const initial = list.find((p) => p.id === remembered) ?? list[0]
         if (initial) await openProject(initial.id)
@@ -104,23 +100,6 @@ export default function App() {
           {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <button className="button" onClick={() => setDialog({ kind: 'newProject' })}>New project</button>
-        {examples.length > 0 && (
-          <select className="input" aria-label="Open example" value="" title="Create a new project from an example"
-            onChange={(event) => {
-              const file = event.target.value
-              if (!file) return
-              void api.createExample(file).then(async (created) => {
-                setProjects(await api.projects())
-                await openProject(created.id)
-                const loadedTree = await api.tree(created.id)
-                setSelectedId(loadedTree.find((n) => n.kind === 'folder')?.id ?? null)
-                setView('configurator')
-              }).catch((reason: Error) => setError(reason.message))
-            }}>
-            <option value="">Open example…</option>
-            {examples.map((e) => <option key={e.file} value={e.file} title={e.description}>{e.name}</option>)}
-          </select>
-        )}
         {(
           <div className="tabs" role="tablist">
             <button role="tab" aria-selected={view === 'blueprints'} className={`tab ${view === 'blueprints' ? 'tab-active' : ''}`} onClick={() => setView('blueprints')}>Blueprints</button>
@@ -134,17 +113,10 @@ export default function App() {
           </div>
         )}
         <span className="spacer" />
-        {project && <button className="button" onClick={() => setDialog({ kind: 'export' })}>Export for HMI</button>}
+        {project && <button className="button" onClick={() => setDialog({ kind: 'export' })}>Export to SCADA…</button>}
       </header>
 
       {error && <div className="banner banner-error">{error}</div>}
-      {libraryErrors.length > 0 && (
-        <div className="banner banner-warning">
-          CM library problems:
-          <ul>{libraryErrors.map((e, i) => <li key={i}><code>{e.file}</code> {e.line ? `(${e.line})` : `[${e.path}]`}: {e.message}</li>)}</ul>
-        </div>
-      )}
-
       {view === 'blueprints' ? (
         <main className="workspace bp-workspace"><BlueprintPanel /></main>
       ) : project ? (
@@ -221,8 +193,8 @@ export default function App() {
       )}
       {project && dialog?.kind === 'newCm' && (
         <CmWizard types={types} tree={tree} maxLength={project.maxNameLength} initialParentId={targetFolderId} onClose={close}
-          onSubmit={async (type, name, parentId, optionalTags) => {
-            const node = await api.createControlModule(project.id, type, name, parentId, optionalTags)
+          onSubmit={async (blueprintId, name, parentId) => {
+            const node = await api.createControlModule(project.id, blueprintId, name, parentId)
             await refresh()
             setSelectedId(node.id)
             close()

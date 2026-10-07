@@ -14,20 +14,29 @@ export type StateCategory = {
   column: number
 }
 
-export type SeverityBand = { name: string; from: number; to: number }
+export type AlarmLevel = 'Caution' | 'Warning' | 'Alarm'
+
+/** Alarm priority band: 0–9 caution, 10–19 warning, 20–30 alarm (ApolloIQ.Core). */
+export type PriorityBand = { level: AlarmLevel; from: number; to: number }
 
 export type Conventions = {
   categorySize: number
   unavailableCode: number
   states: StateCategory[]
-  severityMin: number
-  severityMax: number
-  severityBands: SeverityBand[]
+  alarmPriorityMin: number
+  alarmPriorityMax: number
+  alarmPriorityBands: PriorityBand[]
+  defaultAlarmPriority: number
   priorityMin: number
   priorityMax: number
   maxDebounceSeconds: number
   defaultDebounceSeconds: number
-  defaultSeverity: number
+}
+
+/** The level that follows from an alarm priority. */
+export function levelOf(conventions: Conventions | null, priority: number): AlarmLevel | null {
+  if (!conventions || !Number.isFinite(priority)) return null
+  return [...conventions.alarmPriorityBands].reverse().find((b) => priority >= b.from)?.level ?? null
 }
 
 let cached: Promise<Conventions> | null = null

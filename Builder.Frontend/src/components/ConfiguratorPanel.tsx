@@ -195,7 +195,9 @@ export function ConfiguratorPanel({ projectId, folderId, types, revision, onChan
     )
   }
 
-  const addChoices = adding?.kind === 'unit' ? unitBlueprints.map((b) => b.name) : types.map((t) => t.name)
+  const addChoices = adding?.kind === 'unit'
+    ? unitBlueprints.map((b) => ({ id: b.id, label: `${b.name}${b.kind === 'EM' ? ' (EM)' : ''}` }))
+    : types.map((t) => ({ id: t.id, label: t.name }))
 
   return (
     <section className="tag-list configurator">
@@ -209,13 +211,13 @@ export function ConfiguratorPanel({ projectId, folderId, types, revision, onChan
             e.preventDefault()
             const { kind, blueprint, name } = adding
             void run(async () => {
-              if (kind === 'cm') await api.createControlModule(projectId, blueprint, name.trim(), folderId, [])
+              if (kind === 'cm') await api.createControlModule(projectId, blueprint, name.trim(), folderId)
               else await configuratorApi.createUnit(projectId, name.trim(), folderId, blueprint)
             }).then(() => setAdding(null))
           }}>
             <select className="input" aria-label="Blueprint" value={adding.blueprint} onChange={(e) => setAdding({ ...adding, blueprint: e.target.value })}>
               <option value="">— {adding.kind === 'unit' ? 'Unit or Equipment module' : 'CM'} blueprint —</option>
-              {addChoices.map((n) => <option key={n} value={n}>{n}{unitBlueprints.find((b) => b.name === n)?.kind === 'EM' ? ' (EM)' : ''}</option>)}
+              {addChoices.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
             <input className="input mono" aria-label="Instance name" placeholder="Instance name" autoFocus value={adding.name}
               onChange={(e) => setAdding({ ...adding, name: e.target.value })} />

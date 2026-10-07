@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { isWritable, simulationApi, useSimulation, type SimLink, type SimTag, type SimValue, type TcpLink } from '../api/simulation'
+import { isWritable, simulationApi, useSimulation, type SimAlarm, type SimLink, type SimTag, type SimValue, type TcpLink } from '../api/simulation'
 import type { TreeNode } from '../api/types'
 import { stateClass, useConventions } from '../api/conventions'
 
@@ -34,6 +34,15 @@ export function SimulatorPanel({ projectId, scope, revision }: Props) {
   const [onlyForced, setOnlyForced] = useState(false)
   const [tcp, setTcp] = useState<TcpLink | null>(null)
   const [links, setLinks] = useState<SimLink[]>([])
+  const [alarms, setAlarms] = useState<SimAlarm[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    const poll = () => simulationApi.alarms(projectId).then((list) => { if (!cancelled) setAlarms(list) }).catch(() => undefined)
+    void poll()
+    const timer = window.setInterval(() => void poll(), 500)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [projectId, revision])
 
   useEffect(() => {
     let cancelled = false
@@ -64,8 +73,8 @@ export function SimulatorPanel({ projectId, scope, revision }: Props) {
     return <section className="tag-list"><p className="empty">{sim.error ?? 'Loading the simulator…'}</p></section>
   }
 
-  const activeAlarms = sim.tags.filter((t) => t.group === 'ALM' && t.path.endsWith('.active') && t.value === true
-    && (!prefix || t.path.startsWith(prefix)))
+  const activeAlarms = alarms.filter((a) => a.active && (!prefix || a.object === scope?.path || a.object.startsWith(prefix)))
+    .sort((a, b) => b.priority - a.priority)
   const { status } = sim.state
   const running = status.status === 'Running'
   const forcedCount = sim.tags.filter((t) => t.forced || !t.good).length
@@ -121,8 +130,11 @@ export function SimulatorPanel({ projectId, scope, revision }: Props) {
       {activeAlarms.length > 0 && (
         <div className="sim-alarms" aria-label="Active alarms">
           <span className="sim-alarms-title">Active alarms</span>
-          {activeAlarms.map((tag) => (
-            <span key={tag.id} className="sim-alarm mono">{tag.path.replace(/\.ALM\./, ' · ').replace(/\.active$/, '')}</span>
+          {activeAlarms.map((alarm) => (
+            <span key={`${alarm.object}.${alarm.name}`} className={`sim-alarm alarm-band-${(alarm.rangeLevel ?? alarm.level).toLowerCase()}`}
+              title={`${alarm.object} · ${alarm.name} · priority ${alarm.priority} · ${alarm.plcReactive ? 'PLC reactive (PLC logic)' : 'SCADA alarm (evaluated as SCADA will)'}`}>
+              {alarm.message} <span className="mono muted">{alarm.plcReactive ? 'PLC' : 'SCADA'}</span>
+            </span>
           ))}
         </div>
       )}
@@ -145,7 +157,7 @@ export function SimulatorPanel({ projectId, scope, revision }: Props) {
           <div key={cm.id} className="sim-cm">
             <div className="mono sim-cm-path">{cm.path}</div>
             <div className="muted">{cm.type}</div>
-            <div className={stateClass(conventions, cm.state)}>{cm.state} {cm.stateName}</div>
+            <div className={stateClass(conventions, cm.state)}>{cm.state} {cm.stateText && cm.stateText !== cm.stateName ? `${cm.stateName} · ${cm.stateText}` : cm.stateName}</div>
             <div className="muted">{(((status.cycle - (cm.enteredCycle ?? status.cycle)) * status.cycleSeconds)).toFixed(1)} s in state</div>
           </div>
         ))}

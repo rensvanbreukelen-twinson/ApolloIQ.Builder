@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
+import { expressionHelp } from '../lib/expressions'
 
 type Props = {
   value: string
@@ -29,7 +30,7 @@ function ordered(list: string[]) {
   return [...list].sort((a, b) => rank(a) - rank(b) || a.length - b.length || a.localeCompare(b))
 }
 
-const stateContext = /\[?(?:([A-Za-z0-9_.:{}]+?)\.)?STS\.state\]?\s*(?:=|<>)\s*([A-Za-z_]\w*)?$/
+const stateContext = /\[(?:([A-Za-z0-9_.:{}]+?)\.)?STS\.state\]\s*(?:==|!=)\s*([A-Za-z_]\w*)?$/
 
 function stateToken(text: string, caret: number) {
   const match = stateContext.exec(text.slice(0, caret))
@@ -83,7 +84,7 @@ function currentToken(text: string, caret: number, bracketed: boolean) {
   return { start: caret - token.length, token }
 }
 
-export function ExpressionInput({ value, onChange, suggestions, bracketed = false, className, placeholder, ariaLabel, single = false, onAccept, states }: Props) {
+export function ExpressionInput({ value, onChange, suggestions, bracketed = true, className, placeholder, ariaLabel, single = false, onAccept, states }: Props) {
   const input = useRef<HTMLInputElement>(null)
   const [caret, setCaret] = useState(0)
   const [open, setOpen] = useState(false)
@@ -107,9 +108,10 @@ export function ExpressionInput({ value, onChange, suggestions, bracketed = fals
   const accept = (choice: Item) => {
     const end = single ? value.length : caret
     const isState = state !== null && stateNames.length > 0
-    const bracket = bracketed && !isState ? '[' : ''
+    const wrap = bracketed && !isState && !single
+    const bracket = wrap ? '[' : ''
     const after = choice.branch ? value.slice(end).replace(/^[A-Za-z0-9_.]*/, '') : value.slice(end).replace(isState ? /^\w*/ : /^[A-Za-z0-9_.]*\]?/, '')
-    const inserted = choice.branch ? `${bracket}${choice.value}.` : bracketed && !isState ? `[${choice.value}]` : choice.value
+    const inserted = choice.branch ? `${bracket}${choice.value}.` : wrap ? `[${choice.value}]` : choice.value
     const next = value.slice(0, start) + inserted + after
     onChange(next)
     setOpen(choice.branch)
@@ -146,7 +148,7 @@ export function ExpressionInput({ value, onChange, suggestions, bracketed = fals
 
   return (
     <div className="expr-input">
-      <input ref={input} className={className} value={value} placeholder={placeholder} aria-label={ariaLabel} autoComplete="off"
+      <input ref={input} className={className} value={value} placeholder={placeholder} aria-label={ariaLabel} autoComplete="off" title={single ? undefined : expressionHelp}
         role="combobox" aria-expanded={shown} aria-autocomplete="list"
         onChange={(e) => { onChange(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); setOpen(true); setActive(0) }}
         onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}

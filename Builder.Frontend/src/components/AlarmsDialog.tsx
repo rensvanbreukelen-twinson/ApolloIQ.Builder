@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import { useConventions } from '../api/conventions'
+import { levelOf, useConventions } from '../api/conventions'
 import type { AlarmDefinition, TreeNode } from '../api/types'
 import { Modal } from './Modal'
 
@@ -10,8 +10,16 @@ type Props = {
   onClose: () => void
 }
 
-function bandClass(band: string) {
-  return `alarm-band alarm-band-${band.toLowerCase()}`
+function levelClass(level: string | null) {
+  return `alarm-band alarm-band-${(level ?? 'caution').toLowerCase()}`
+}
+
+const sourceLabels: Record<AlarmDefinition['source'], string> = {
+  Blueprint: 'blueprint',
+  StateTimeout: 'state timeout',
+  Trip: 'trip',
+  UnitOverride: 'override',
+  StuckInput: 'command input',
 }
 
 export function AlarmsDialog({ projectId, node, onClose }: Props) {
@@ -30,15 +38,15 @@ export function AlarmsDialog({ projectId, node, onClose }: Props) {
 
   const save = async (alarm: AlarmDefinition, text: string) => {
     const trimmed = text.trim()
-    const severity = trimmed === '' ? null : Number(trimmed)
-    const min = conventions?.severityMin ?? 0
-    const max = conventions?.severityMax ?? 0
-    if (severity !== null && (!conventions || !Number.isInteger(severity) || severity < min || severity > max)) {
-      setError(`Severity must be a whole number from ${min} to ${max}.`)
+    const priority = trimmed === '' ? null : Number(trimmed)
+    const min = conventions?.alarmPriorityMin ?? 0
+    const max = conventions?.alarmPriorityMax ?? 30
+    if (priority !== null && (!Number.isInteger(priority) || priority < min || priority > max)) {
+      setError(`The priority must be a whole number from ${min} to ${max}.`)
       return
     }
     try {
-      setAlarms(await api.setSeverity(projectId, node.id, alarm.name, severity === alarm.defaultSeverity ? null : severity))
+      setAlarms(await api.setPriority(projectId, node.id, alarm.name, priority === alarm.defaultPriority ? null : priority))
       setDrafts((current) => { const next = { ...current }; delete next[alarm.name]; return next })
       setError(null)
     } catch (reason) {
@@ -50,38 +58,42 @@ export function AlarmsDialog({ projectId, node, onClose }: Props) {
     <Modal title={`Alarms of ${node.path}`} onClose={onClose} extraWide
       footer={<button className="button button-primary" onClick={onClose}>Done</button>}>
       {error && <p className="form-error">{error}</p>}
-      <p className="muted">Severity 0–9 caution, 10–19 warning, 20–30 alarm. Leave the field empty to use the type's default.</p>
+      <p className="muted">
+        Priority 0–9 caution, 10–19 warning, 20–30 alarm. Leave the field empty to use the blueprint's priority. <b>PLC reactive</b> alarms are
+        evaluated by the PLC logic (ALM tags); the others are evaluated by SCADA. A priority changed here is not carried over to SCADA.
+      </p>
       <table className="grid alarm-grid">
-        <thead><tr><th>Alarm</th><th>Severity</th><th>Condition</th><th>Latch</th><th>Runs on</th></tr></thead>
+        <thead><tr><th>Alarm</th><th>Priority</th><th>Trigger</th><th>Evaluated by</th><th>Latch</th></tr></thead>
         <tbody>
           {alarms.map((alarm) => {
             const draft = drafts[alarm.name]
-            const custom = alarm.severity !== alarm.defaultSeverity
+            const custom = alarm.priority !== alarm.defaultPriority
+            const shown = draft ?? String(alarm.priority)
             return (
-              <tr key={alarm.name} title={alarm.message.en ?? alarm.name}>
+              <tr key={alarm.name} title={alarm.message}>
                 <td>
-                  <div>{alarm.message.en ?? alarm.name}</div>
-                  <div className="mono muted">{alarm.name}</div>
+                  <div>{alarm.message}</div>
+                  <div className="mono muted">{alarm.name} · {sourceLabels[alarm.source]}</div>
                 </td>
                 <td className="alarm-severity">
-                  <input className="input" aria-label={`Severity of ${alarm.name}`} inputMode="numeric"
-                    value={draft ?? String(alarm.severity)}
+                  <input className="input" aria-label={`Priority of ${alarm.name}`} inputMode="numeric" value={shown}
                     onChange={(e) => setDrafts((current) => ({ ...current, [alarm.name]: e.target.value }))}
                     onBlur={(e) => { if (draft !== undefined) void save(alarm, e.target.value) }}
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
-                  <span className={bandClass(alarm.band)}>{alarm.band}</span>
-                  {custom && <span className="muted"> default {alarm.defaultSeverity}</span>}
+                  <span className={levelClass(levelOf(conventions, Number(shown)) ?? alarm.level)}>{levelOf(conventions, Number(shown)) ?? alarm.level}</span>
+                  {custom && <span className="muted"> blueprint {alarm.defaultPriority}</span>}
                 </td>
                 <td className="mono alarm-condition">
+                  <div className="muted">{alarm.trigger}</div>
                   {alarm.onTransition && <div>on transition “{alarm.onTransition}”</div>}
-                  {alarm.condition !== 'TRUE' && <div>{alarm.condition}</div>}
+                  {alarm.condition && alarm.condition !== 'TRUE' && <div>{alarm.condition}</div>}
                 </td>
-                <td className="mono">{alarm.latch === 'FALSE' ? '—' : alarm.latch === 'TRUE' ? 'until reset' : alarm.latch}</td>
-                <td>{alarm.runsOn}</td>
+                <td>{alarm.plcReactive ? <>PLC{alarm.activeTag && <div className="mono muted">{alarm.activeTag}</div>}</> : 'SCADA'}</td>
+                <td>{alarm.latched ? 'until reset' : '—'}</td>
               </tr>
             )
           })}
-          {alarms.length === 0 && !error && <tr><td colSpan={5} className="empty">This CM type has no alarms.</td></tr>}
+          {alarms.length === 0 && !error && <tr><td colSpan={5} className="empty">This blueprint has no alarms.</td></tr>}
         </tbody>
       </table>
     </Modal>

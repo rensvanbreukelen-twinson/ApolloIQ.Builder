@@ -1,8 +1,10 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  blueprintApi, newBlueprint, type Blueprint, type BpAction, type BpCatalog, type BpInterlock, type BpIssue, type BpState, type BpSummary, type BlueprintKind,
+  blueprintApi, newAlarm, newBlueprint, nextVersion, type AlarmTrigger, type Blueprint, type BpAction, type BpAlarm, type BpCatalog, type BpInterlock, type BpIssue,
+  type BpState, type BpSummary, type BlueprintKind,
 } from '../api/blueprints'
-import { useConventions } from '../api/conventions'
+import { levelOf, useConventions } from '../api/conventions'
+import { expressionHelp } from '../lib/expressions'
 import { BlueprintDiagram } from './BlueprintDiagram'
 import { CommandInputsEditor } from './CommandInputsEditor'
 import { ExpressionInput } from './ExpressionInput'
@@ -11,9 +13,10 @@ const Suggestions = createContext<{ refs: string[]; writable: string[]; states?:
 
 type Tab = 'general' | 'tags' | 'roles' | 'states' | 'transitions' | 'alarms' | 'interlocks' | 'inputs' | 'simulation' | 'json'
 
-const standardAliases = ['is_running', 'is_off', 'is_stopped', 'is_available', 'is_starting', 'is_stopping', 'is_shutdown']
-
 const writableGroups = ['OUT', 'STS', 'INT', 'CMD', 'SET']
+
+/** A role whose blueprint is not chosen yet (the server reads ids as Guids). */
+const noBlueprint = '00000000-0000-0000-0000-000000000000'
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -35,10 +38,9 @@ function uniqueName(base: string, taken: string[]) {
 }
 
 export function BlueprintPanel() {
-  const conventions = useConventions()
   const [catalog, setCatalog] = useState<BpCatalog | null>(null)
   const [list, setList] = useState<BpSummary[]>([])
-  const [savedName, setSavedName] = useState<string | null>(null)
+  const [savedId, setSavedId] = useState<string | null>(null)
   const [bp, setBp] = useState<Blueprint | null>(null)
   const [dirty, setDirty] = useState(false)
   const [issues, setIssues] = useState<BpIssue[]>([])
@@ -65,14 +67,14 @@ export function BlueprintPanel() {
     return () => window.clearTimeout(timer)
   }, [bp])
 
-  const roleKey = bp && bp.kind !== 'CM' ? bp.roles.map((r) => r.blueprint).join(',') : ''
+  const roleKey = bp && bp.kind !== 'CM' ? bp.roles.map((r) => r.blueprintId).join(',') : ''
   useEffect(() => {
     let cancelled = false
     const load = (names: string[]) => Promise.all([...new Set(names)].map((n) => blueprintApi.get(n).then((r) => [n, r.blueprint] as const).catch(() => null)))
       .then((loaded) => loaded.filter((x): x is readonly [string, Blueprint] => x !== null))
     void (async () => {
-      const first = await load(roleKey.split(',').filter(Boolean))
-      const second = await load(first.filter(([, m]) => m.kind !== 'CM').flatMap(([, m]) => m.roles.map((r) => r.blueprint)))
+      const first = await load(roleKey.split(',').filter((id) => id && id !== noBlueprint))
+      const second = await load(first.filter(([, m]) => m.kind !== 'CM').flatMap(([, m]) => m.roles.map((r) => r.blueprintId)))
       if (!cancelled) setMembers(Object.fromEntries([...first, ...second]))
     })()
     return () => { cancelled = true }
@@ -80,13 +82,13 @@ export function BlueprintPanel() {
 
   const confirmDiscard = () => !dirty || window.confirm('Discard the unsaved changes?')
 
-  const open = async (name: string) => {
+  const open = async (id: string) => {
     if (!confirmDiscard()) return
     try {
-      const result = await blueprintApi.get(name)
+      const result = await blueprintApi.get(id)
       setBp(result.blueprint)
       setIssues(result.issues)
-      setSavedName(name)
+      setSavedId(id)
       setDirty(false)
       setSelectedState(result.blueprint.states[0]?.name ?? null)
       setError(null)
@@ -101,7 +103,7 @@ export function BlueprintPanel() {
     if (!initial) return
     const created = newBlueprint(kind, uniqueName(kind === 'Unit' ? 'NewUnit' : kind === 'EM' ? 'NewEquipmentModule' : 'NewBlueprint', list.map((b) => b.name)), initial.code)
     setBp(created)
-    setSavedName(null)
+    setSavedId(null)
     setDirty(true)
     setTab('general')
     setSelectedState('Off')
@@ -121,10 +123,10 @@ export function BlueprintPanel() {
   const save = async () => {
     if (!bp) return
     try {
-      const result = await blueprintApi.save(savedName ?? bp.name, bp)
+      const result = await blueprintApi.save(bp)
       setBp(result.blueprint)
       setIssues(result.issues)
-      setSavedName(result.blueprint.name)
+      setSavedId(result.blueprint.id ?? null)
       setDirty(false)
       setError(null)
       await reloadList()
@@ -134,10 +136,10 @@ export function BlueprintPanel() {
   }
 
   const remove = async () => {
-    if (!bp || !savedName || !window.confirm(`Delete blueprint ${savedName}?`)) return
-    await blueprintApi.remove(savedName)
+    if (!bp || !savedId || !window.confirm(`Delete blueprint ${bp.name}?`)) return
+    await blueprintApi.remove(savedId)
     setBp(null)
-    setSavedName(null)
+    setSavedId(null)
     setDirty(false)
     await reloadList()
   }
@@ -145,49 +147,57 @@ export function BlueprintPanel() {
   const interfaceTags = useMemo(() => {
     if (!bp || !catalog) return []
     return catalog.interfaces
-      .filter((i) => i.required || bp.interfaces.includes(i.name) || (i.name === 'AutoManual' && bp.kind !== 'CM'))
+      .filter((i) => i.requiredFor.includes(bp.kind) || (bp.interfaces.includes(i.name) && !(i.name === 'Container' && bp.kind === 'CM')))
       .flatMap((i) => i.tags.map((t) => ({ ...t, from: i.name })))
   }, [bp, catalog])
 
   const references = useMemo(() => {
     if (!bp) return []
     const own = [...interfaceTags.map((t) => `${t.group}.${t.name}`), ...bp.tags.map((t) => `${t.group}.${t.name}`)]
-    const alarms = [...bp.alarms.map((a) => a.name), ...bp.states.map((s) => s.timeout?.alarm).filter((a): a is string => !!a)]
+    const standardAliases = catalog?.standardAliases ?? []
+    const plcAlarms = (b: Blueprint) => [
+      ...b.alarms.filter((a) => a.plcReactive).map((a) => a.name),
+      ...b.states.map((s) => s.timeout?.alarm).filter((a): a is string => !!a),
+      ...(b.interlocks ?? []).filter((r) => r.kind === 'Trip').map((r, i) => r.alarm || `Trip${i + 1}`),
+    ]
     const memberRefs = (prefix: string, m: Blueprint): string[] => {
       if (!catalog) return []
       const tags = [
-        ...catalog.interfaces.filter((i) => i.required || m.interfaces.includes(i.name)).flatMap((i) => i.tags),
+        ...catalog.interfaces.filter((i) => i.requiredFor.includes(m.kind) || m.interfaces.includes(i.name)).flatMap((i) => i.tags),
         ...m.tags,
       ]
-      return [...tags.map((t) => `${prefix}.${t.group}.${t.name}`), ...m.alarms.map((a) => `${prefix}.ALM.${a.name}.active`),
+      return [...tags.map((t) => `${prefix}.${t.group}.${t.name}`), ...plcAlarms(m).map((a) => `${prefix}.ALM.${a}.active`),
         ...[...standardAliases, ...Object.keys(m.aliases ?? {})].map((a) => `${prefix}.${a}`)]
     }
     const roles = bp.kind !== 'CM' ? bp.roles.flatMap((r) => {
-      const m = members[r.blueprint]
+      const m = members[r.blueprintId]
       if (!m) return []
-      const nested = m.kind !== 'CM' ? m.roles.flatMap((s) => members[s.blueprint] ? memberRefs(`${r.name}.${s.name}`, members[s.blueprint]) : []) : []
+      const nested = m.kind !== 'CM' ? m.roles.flatMap((s) => members[s.blueprintId] ? memberRefs(`${r.name}.${s.name}`, members[s.blueprintId]) : []) : []
       return [...memberRefs(r.name, m), ...nested]
     }) : []
-    return [...own, ...alarms.map((a) => `ALM.${a}.active`), ...roles]
+    return [...own, ...plcAlarms(bp).map((a) => `ALM.${a}.active`), ...standardAliases, ...Object.keys(bp.aliases ?? {}), ...roles]
   }, [bp, interfaceTags, members, catalog])
 
   const rolePaths = useMemo(() => {
     if (!bp || bp.kind === 'CM') return []
     return bp.roles.flatMap((r) => {
-      const m = members[r.blueprint]
-      const nested = m && m.kind !== 'CM' ? m.roles.map((s) => ({ path: `${r.name}.${s.name}`, blueprint: members[s.blueprint] })) : []
+      const m = members[r.blueprintId]
+      const nested = m && m.kind !== 'CM' ? m.roles.map((s) => ({ path: `${r.name}.${s.name}`, blueprint: members[s.blueprintId] })) : []
       return [{ path: r.name, blueprint: m }, ...nested]
     })
   }, [bp, members])
 
   const stateNames = useCallback((reference: string) => {
     if (!bp) return []
-    const source = reference === '' ? bp : members[bp.roles.find((r) => r.name === reference)?.blueprint ?? '']
-    return source ? [...new Set([...source.states.map((st) => st.name), 'Unavailable'])] : []
-  }, [bp, members])
+    const role = rolePaths.find((r) => r.path === reference)
+    const source = reference === '' ? bp : role?.blueprint
+    const categories = (catalog?.categories ?? []).map((c) => c.name)
+    return source ? [...new Set([...source.states.map((st) => st.name), ...categories, 'Unavailable'])] : []
+  }, [bp, rolePaths, catalog])
 
   const writable = references.filter((r) => {
     const parts = r.split('.')
+    if (parts.length < 2) return false
     return parts.length === 3 ? parts[1] === 'CMD' : writableGroups.includes(parts[0]) && parts[0] !== 'ALM'
   })
 
@@ -211,8 +221,8 @@ export function BlueprintPanel() {
           </div>
           <ul>
             {list.map((b) => (
-              <li key={b.name}>
-                <button className={`bp-list-item ${savedName === b.name ? 'bp-list-item-active' : ''}`} onClick={() => void open(b.name)}>
+              <li key={b.id}>
+                <button className={`bp-list-item ${savedId === b.id ? 'bp-list-item-active' : ''}`} onClick={() => void open(b.id)}>
                   <span className="mono">{b.name}</span>
                   <span className="muted"> {b.kind} v{b.version}</span>
                   {b.errors > 0 && <span className="bp-count bp-count-error">{b.errors}</span>}
@@ -240,7 +250,7 @@ export function BlueprintPanel() {
               <span className={errors ? 'bp-count bp-count-error' : 'bp-ok'}>{errors ? `${errors} errors` : 'no errors'}</span>
               {warnings > 0 && <span className="bp-count bp-count-warning">{warnings} warnings</span>}
               <button className="button button-primary" disabled={!dirty} onClick={() => void save()}>Save</button>
-              {savedName && <button className="button button-danger" onClick={() => void remove()}>Delete</button>}
+              {savedId && <button className="button button-danger" onClick={() => void remove()}>Delete</button>}
             </div>
             {error && <div className="banner banner-error">{error}</div>}
 
@@ -249,17 +259,27 @@ export function BlueprintPanel() {
                 <div className="bp-form">
                   <label>Name<input className="input" value={bp.name} onChange={(e) => update((d) => { d.name = e.target.value })} /></label>
                   <label>Kind<input className="input" value={bp.kind} disabled /></label>
-                  <label>Version<input className="input" value={bp.version} onChange={(e) => update((d) => { d.version = e.target.value })} /></label>
+                  <label>Version
+                    <span className="bp-version">
+                      <input className="input mono bp-narrow" aria-label="Version" value={bp.version} readOnly />
+                      {(['release', 'major', 'minor'] as const).map((part) => (
+                        <button key={part} type="button" className="button button-small" title={`Next ${part} version: ${nextVersion(bp.version, part)}`}
+                          onClick={() => update((d) => { d.version = nextVersion(d.version, part) })}>+{part}</button>
+                      ))}
+                    </span>
+                  </label>
+                  {bp.id && <label>Id<input className="input mono" value={bp.id} readOnly /></label>}
                   <label className="bp-wide">Description<textarea className="input" rows={3} value={bp.description} onChange={(e) => update((d) => { d.description = e.target.value })} /></label>
                   <fieldset className="bp-wide">
                     <legend>Interfaces</legend>
-                    {catalog.interfaces.map((i) => {
-                      const forced = i.required || (i.name === 'AutoManual' && bp.kind !== 'CM')
+                    {catalog.interfaces.filter((i) => !(i.name === 'Container' && bp.kind === 'CM')).map((i) => {
+                      const forced = i.requiredFor.includes(bp.kind)
                       return (
                         <label key={i.name} className="checkbox">
                           <input type="checkbox" disabled={forced} checked={forced || bp.interfaces.includes(i.name)}
                             onChange={(e) => update((d) => { d.interfaces = e.target.checked ? [...d.interfaces, i.name] : d.interfaces.filter((n) => n !== i.name) })} />
                           {i.name} <span className="muted mono">{i.tags.map((t) => `${t.group}.${t.name}`).join(', ')}</span>
+                          {!i.inScada && <span className="muted"> · Builder only (its tags go to SCADA as ordinary tags)</span>}
                         </label>
                       )
                     })}
@@ -314,24 +334,24 @@ export function BlueprintPanel() {
               {tab === 'roles' && (
                 <div className="bp-section">
                   <p className="muted">{bp.kind === 'EM'
-                    ? <>Roles are placeholders for the CMs of this Equipment module. Each instance fills them with real CMs, which then sit under it in the tree. Refer to member tags as <code>ROLE.GROUP.name</code>; an Equipment module may only write its members' commands.</>
-                    : <>Roles are placeholders for the members of this Unit: Equipment modules or CMs. Each Unit instance fills them, and the members then sit under it in the tree. Refer to member tags as <code>ROLE.GROUP.name</code>; a Unit may only write its members' commands.</>}</p>
+                    ? <>Roles are placeholders for the CMs of this Equipment module. Each instance fills them with real CMs, which then sit under it in the tree. Refer to member tags as <code>[ROLE.GROUP.name]</code> and member states as <code>[ROLE.STS.state] == Name</code>; an Equipment module may only write its members' commands.</>
+                    : <>Roles are placeholders for the members of this Unit: Equipment modules or CMs. Each Unit instance fills them, and the members then sit under it in the tree. Refer to member tags as <code>[ROLE.GROUP.name]</code>; a Unit may only write its members' commands.</>}</p>
                   <table className="grid bp-grid">
                     <thead><tr><th>Role</th><th>Blueprint</th><th /></tr></thead>
                     <tbody>
                       {bp.roles.map((r, i) => (
                         <tr key={i}>
                           <td><input className="input mono" aria-label="Role name" value={r.name} onChange={(e) => update((d) => { d.roles[i].name = e.target.value })} /></td>
-                          <td><select className="input" aria-label="Role blueprint" value={r.blueprint} onChange={(e) => update((d) => { d.roles[i].blueprint = e.target.value })}>
-                            <option value="">— choose —</option>
-                            {list.filter((b) => b.kind === 'CM' || (bp.kind === 'Unit' && b.kind === 'EM')).map((b) => <option key={b.name} value={b.name}>{b.name}{b.kind === 'EM' ? ' (EM)' : ''}</option>)}
+                          <td><select className="input" aria-label="Role blueprint" value={r.blueprintId} onChange={(e) => update((d) => { d.roles[i].blueprintId = e.target.value })}>
+                            <option value={noBlueprint}>— choose —</option>
+                            {list.filter((b) => b.kind === 'CM' || (bp.kind === 'Unit' && b.kind === 'EM')).map((b) => <option key={b.id} value={b.id}>{b.name}{b.kind === 'EM' ? ' (EM)' : ''}</option>)}
                           </select></td>
                           <td><button className="button button-small" onClick={() => update((d) => { d.roles.splice(i, 1) })}>Remove</button></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  <button className="button button-small" onClick={() => update((d) => { d.roles.push({ name: uniqueName('MEMBER', d.roles.map((r) => r.name)), blueprint: '' }) })}>+ Role</button>
+                  <button className="button button-small" onClick={() => update((d) => { d.roles.push({ name: uniqueName('MEMBER', d.roles.map((r) => r.name)), blueprintId: noBlueprint }) })}>+ Role</button>
                 </div>
               )}
 
@@ -343,7 +363,7 @@ export function BlueprintPanel() {
                   <div className="bp-state-side">
                     <div className="bp-row-actions">
                       <select className="input" aria-label="Selected state" value={selectedState ?? ''} onChange={(e) => setSelectedState(e.target.value)}>
-                        {bp.states.map((s) => <option key={s.name} value={s.name}>{s.code} {s.name}</option>)}
+                        {bp.states.map((s) => <option key={s.name} value={s.name}>{s.code} {s.name}{s.text ? ` · ${s.text}` : ''}</option>)}
                       </select>
                       <button className="button button-small" onClick={() => {
                         const name = uniqueName('State', bp.states.map((s) => s.name))
@@ -397,39 +417,14 @@ export function BlueprintPanel() {
                     })}>+ Transition</button>
                   </div>
                   <h4>Always-running logic</h4>
-                  <p className="muted">Runs every cycle in every state, before the transitions. Use it for conditioning, such as <code>INT.feedback := FIN.feedback</code>.</p>
+                  <p className="muted">Runs every cycle in every state, before the transitions, for example <code>STS.remote_ok := [STS.enabled] &amp;&amp; [INT.remote]</code>. {expressionHelp}</p>
                   <ActionList actions={bp.always} onChange={(change) => update((d) => change(d.always))} />
                 </div>
               )}
 
               {tab === 'alarms' && (
-                <div className="grid-wrap">
-                  <p className="muted">Alarms run at the end of every cycle. <b>Reactive</b> alarms may be used in this blueprint's transitions; <b>non-reactive</b> alarms only inform the operator and other CMs. Timeout alarms are set on the state.</p>
-                  <table className="grid bp-grid">
-                    <thead><tr><th>Name</th><th>Kind</th><th>Condition</th><th>On transition</th><th>Latched</th><th>Severity</th><th>Message</th><th /></tr></thead>
-                    <tbody>
-                      {bp.alarms.map((a, i) => (
-                        <tr key={i}>
-                          <td><input className="input mono" aria-label="Alarm name" value={a.name} onChange={(e) => update((d) => { d.alarms[i].name = e.target.value })} /></td>
-                          <td><select className="input" aria-label="Alarm kind" value={a.kind} onChange={(e) => update((d) => { d.alarms[i].kind = e.target.value as 'Reactive' | 'NonReactive' })}>
-                            <option value="Reactive">Reactive</option><option value="NonReactive">Non-reactive</option></select></td>
-                          <td><ExpressionInput className="input mono bp-expr" ariaLabel="Condition" value={a.condition} onChange={(v) => update((d) => { d.alarms[i].condition = v })} suggestions={references} states={stateNames} /></td>
-                          <td><select className="input" aria-label="On transition" value={a.onTransition ?? ''} onChange={(e) => update((d) => { d.alarms[i].onTransition = e.target.value || null })}>
-                            <option value="">— any time —</option>{bp.transitions.map((t) => <option key={t.name}>{t.name}</option>)}</select></td>
-                          <td><input type="checkbox" aria-label="Latched" title="Stays active until CMD.reset" checked={!!a.latched} onChange={(e) => update((d) => { d.alarms[i].latched = e.target.checked })} /></td>
-                          <td><input className="input bp-narrow" type="number" min={conventions?.severityMin} max={conventions?.severityMax} value={a.severity} onChange={(e) => update((d) => { d.alarms[i].severity = Number(e.target.value) })} /></td>
-                          <td><input className="input" value={a.message} onChange={(e) => update((d) => { d.alarms[i].message = e.target.value })} /></td>
-                          <td><button className="button button-small" onClick={() => update((d) => { d.alarms.splice(i, 1) })}>Remove</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="bp-row-actions">
-                    <button className="button button-small" onClick={() => update((d) => {
-                      d.alarms.push({ name: uniqueName('Alarm', d.alarms.map((a) => a.name)), kind: 'Reactive', condition: '', severity: 20, message: '' })
-                    })}>+ Alarm</button>
-                  </div>
-                </div>
+                <AlarmList bp={bp} references={references} stateNames={stateNames}
+                  onChange={(change) => update((d) => change(d.alarms))} />
               )}
 
               {tab === 'interlocks' && (
@@ -451,7 +446,7 @@ export function BlueprintPanel() {
 
               {tab === 'simulation' && (
                 <div className="bp-section">
-                  <p className="muted">The plant model runs first in every simulator cycle and writes this blueprint's inputs (FIN tags), for example <code>FIN.feedback := OUT.lamp</code>. It is used only by the simulator, never in PLC code. Saved blueprints without errors appear as CM types in <b>New control module</b>.</p>
+                  <p className="muted">The plant model runs first in every simulator cycle and writes this blueprint's inputs (FIN tags), for example <code>FIN.feedback := [OUT.lamp]</code>. It is used only by the simulator, never in PLC code. Saved blueprints without errors appear as CM types in <b>New control module</b>.</p>
                   <ActionList actions={bp.plant ?? []} onChange={(change) => update((d) => { d.plant ??= []; change(d.plant) })} />
                 </div>
               )}
@@ -501,8 +496,12 @@ function StateEditor({ state, states, catalog, onRename, onChange }: StateEditor
   return (
     <div className="bp-state-editor">
       <div className="bp-form">
-        <label>Name<input className="input mono" aria-label="State name" value={name} onChange={(e) => setName(e.target.value)} onBlur={commit}
+        <label>Name<input className="input mono" aria-label="State name" title="Identifier used in expressions: [STS.state] == Name" value={name} onChange={(e) => setName(e.target.value)} onBlur={commit}
           onKeyDown={(e) => { if (e.key === 'Enter') commit() }} /></label>
+        <label>Display text<input className="input" aria-label="State text" placeholder={state.name} value={state.text ?? ''}
+          onChange={(e) => onChange((s) => { s.text = e.target.value || null })} /></label>
+        <label className="bp-wide">Description<input className="input" aria-label="State description" value={state.description ?? ''}
+          onChange={(e) => onChange((s) => { s.description = e.target.value })} /></label>
         <label>Category<select className="input" aria-label="Category" value={state.category} onChange={(e) => onChange((s) => { s.category = Number(e.target.value) })}>
           {catalog.categories.map((c) => <option key={c.code} value={c.code}>{c.code} {c.label}</option>)}
         </select></label>
@@ -517,19 +516,19 @@ function StateEditor({ state, states, catalog, onRename, onChange }: StateEditor
       <div className="bp-action-block">
         <h4>
           <label className="checkbox"><input type="checkbox" checked={!!state.timeout}
-            onChange={(e) => onChange((s) => { s.timeout = e.target.checked ? { time: '10', goTo: null, alarm: null, alarmKind: 'Reactive', severity: 20 } : null })} />Timeout</label>
+            onChange={(e) => onChange((s) => { s.timeout = e.target.checked ? { time: '10', goTo: null, alarm: null, priority: conventions?.defaultAlarmPriority ?? 25 } : null })} />Timeout</label>
         </h4>
         {state.timeout && (
           <div className="bp-form">
-            <label>Time (s or PAR tag)<ExpressionInput className="input mono" ariaLabel="Timeout time" value={state.timeout.time} onChange={(v) => onChange((s) => { s.timeout!.time = v })} suggestions={suggest.refs} states={suggest.states} single /></label>
+            <label>Time (s or expression)<ExpressionInput className="input mono" ariaLabel="Timeout time" placeholder="10 or [PAR.max_time]" value={state.timeout.time} onChange={(v) => onChange((s) => { s.timeout!.time = v })} suggestions={suggest.refs} /></label>
             <label>Go to<select className="input" aria-label="Timeout go to" value={state.timeout.goTo ?? ''} onChange={(e) => onChange((s) => { s.timeout!.goTo = e.target.value || null })}>
               <option value="">— stay —</option>{states.map((n) => <option key={n}>{n}</option>)}</select></label>
             <label>Alarm name<input className="input mono" aria-label="Timeout alarm" value={state.timeout.alarm ?? ''} placeholder="none" onChange={(e) => onChange((s) => { s.timeout!.alarm = e.target.value || null })} /></label>
             {state.timeout.alarm && (
               <>
-                <label>Alarm kind<select className="input" value={state.timeout.alarmKind} onChange={(e) => onChange((s) => { s.timeout!.alarmKind = e.target.value as 'Reactive' | 'NonReactive' })}>
-                  <option value="Reactive">Reactive</option><option value="NonReactive">Non-reactive</option></select></label>
-                <label>Severity<input className="input bp-narrow" type="number" min={conventions?.severityMin} max={conventions?.severityMax} value={state.timeout.severity} onChange={(e) => onChange((s) => { s.timeout!.severity = Number(e.target.value) })} /></label>
+                <label>Priority<input className="input bp-narrow" type="number" aria-label="Timeout alarm priority" min={conventions?.alarmPriorityMin} max={conventions?.alarmPriorityMax} value={state.timeout.priority} onChange={(e) => onChange((s) => { s.timeout!.priority = Number(e.target.value) })} />
+                  <span className="muted"> {levelOf(conventions, state.timeout.priority)} · PLC reactive</span></label>
+                <label className="bp-wide">Message<input className="input" aria-label="Timeout alarm message" placeholder={`{instance_name}: ${state.text || state.name} took too long`} value={state.timeout.message ?? ''} onChange={(e) => onChange((s) => { s.timeout!.message = e.target.value || null })} /></label>
               </>
             )}
             <p className="muted bp-wide">With a constant time the Builder generates <code>PAR.{state.name}_timeout</code> so it can be tuned per instance.</p>
@@ -547,7 +546,7 @@ function ActionList({ actions, onChange }: { actions: BpAction[]; onChange: (cha
       {actions.map((a, i) => (
         <div key={i} className="bp-action">
           <span className="muted">set</span>
-          <ExpressionInput className="input mono" ariaLabel="Action tag" placeholder="OUT.tag" value={a.tag} onChange={(v) => onChange((l) => { l[i].tag = v })} suggestions={suggest.writable} single />
+          <ExpressionInput className="input mono" ariaLabel="Action tag" placeholder="OUT.tag" value={a.tag} onChange={(v) => onChange((l) => { l[i].tag = v })} suggestions={suggest.writable} bracketed={false} single />
           <span className="muted">:=</span>
           <ExpressionInput className="input mono bp-expr" ariaLabel="Action value" placeholder="expression" value={a.value} onChange={(v) => onChange((l) => { l[i].value = v })} suggestions={suggest.refs} states={suggest.states} />
           <button className="button button-small" onClick={() => onChange((l) => { l.splice(i, 1) })}>×</button>
@@ -603,7 +602,7 @@ function InterlockList({ bp, rolePaths, references, stateNames, onChange }: {
                 </select>
               </td>
               <td><ExpressionInput className="input mono bp-expr" ariaLabel="Condition" value={r.condition}
-                placeholder={r.kind === 'Trip' ? 'NOT ENGINE.is_running' : 'ENGINE.is_running'}
+                placeholder={r.kind === 'Trip' ? '![ENGINE.is_running]' : '[ENGINE.is_running]'}
                 onChange={(v) => onChange((l) => { l[i].condition = v })} suggestions={references} states={stateNames} /></td>
               <td><input className="input" aria-label="HMI text" placeholder="generated from the condition" value={r.text} onChange={(e) => onChange((l) => { l[i].text = e.target.value })} /></td>
               <td><button className="button button-small" onClick={() => onChange((l) => { l.splice(i, 1) })}>Remove</button></td>
@@ -613,7 +612,7 @@ function InterlockList({ bp, rolePaths, references, stateNames, onChange }: {
                 <td />
                 <td colSpan={4}>
                   <label>Alarm <input className="input mono" aria-label="Trip alarm" placeholder={`Trip${list.slice(0, i + 1).filter((x) => x.kind === 'Trip').length}`} value={r.alarm ?? ''} onChange={(e) => onChange((l) => { l[i].alarm = e.target.value || null })} /></label>
-                  <label>Severity <input className="input bp-narrow" type="number" aria-label="Severity" min={conventions?.severityMin} max={conventions?.severityMax} value={r.severity} onChange={(e) => onChange((l) => { l[i].severity = Number(e.target.value) })} /></label>
+                  <label>Priority <input className="input bp-narrow" type="number" aria-label="Priority" min={conventions?.alarmPriorityMin} max={conventions?.alarmPriorityMax} value={r.priority} onChange={(e) => onChange((l) => { l[i].priority = Number(e.target.value) })} /> <span className="muted">{levelOf(conventions, r.priority)}</span></label>
                   <label>Escalate <select className="input" aria-label="Escalate" value={r.escalate} onChange={(e) => onChange((l) => { l[i].escalate = e.target.value as BpInterlock['escalate'] })}>
                     <option value="None">None: only the target trips</option><option value="EM">EM: its Equipment module goes to Shutdown</option><option value="Unit">Unit: its Unit goes to Shutdown</option>
                   </select></label>
@@ -628,9 +627,84 @@ function InterlockList({ bp, rolePaths, references, stateNames, onChange }: {
       <div className="bp-row-actions">
         {(Object.keys(kindLabels) as BpInterlock['kind'][]).map((k) => (
           <button key={k} className="button button-small" onClick={() => onChange((l) => {
-            l.push({ target: '', kind: k, condition: '', text: '', alarm: null, severity: conventions?.defaultSeverity ?? 20, escalate: 'None' })
+            l.push({ target: '', kind: k, condition: '', text: '', alarm: null, priority: conventions?.defaultAlarmPriority ?? 25, escalate: 'None' })
           })}>+ {kindLabels[k]}</button>
         ))}
+      </div>
+    </div>
+  )
+}
+
+const triggerLabels: Record<AlarmTrigger, string> = { State: 'State (condition)', Range: 'Range (thresholds)', Timeout: 'Timeout' }
+
+function AlarmList({ bp, references, stateNames, onChange }: {
+  bp: Blueprint
+  references: string[]
+  stateNames: (reference: string) => string[]
+  onChange: (change: (list: BpAlarm[]) => void) => void
+}) {
+  const conventions = useConventions()
+  const expr = (i: number, field: keyof BpAlarm, label: string, placeholder = '') => (
+    <label key={field}>{label}
+      <ExpressionInput className="input mono bp-expr" ariaLabel={`${label} of ${bp.alarms[i].name}`} placeholder={placeholder} value={String(bp.alarms[i][field] ?? '')}
+        onChange={(v) => onChange((l) => { (l[i] as Record<string, unknown>)[field] = v })} suggestions={references} states={stateNames} />
+    </label>
+  )
+  return (
+    <div className="grid-wrap">
+      <p className="muted">
+        Alarms are defined as in SCADA: a name, a priority (0–9 caution, 10–19 warning, 20–30 alarm), the message (<code>{'{instance_name}'}</code> is
+        replaced by the object's name), a trigger and an on-delay. <b>PLC reactive</b>: the PLC logic evaluates the alarm and reacts to it — transitions may
+        read <code>[ALM.name.active]</code> and SCADA reads the PLC alarm byte. Without it SCADA evaluates the alarm and the state machine cannot see it.
+        The simulator evaluates every alarm. Timeout alarms of states and trip alarms of interlocks are PLC reactive and are set there.
+      </p>
+      {bp.alarms.map((a, i) => (
+        <fieldset key={i} className="bp-alarm">
+          <legend className="mono">{a.name || 'alarm'}</legend>
+          <div className="bp-form">
+            <label>Name<input className="input mono" aria-label="Alarm name" value={a.name} onChange={(e) => onChange((l) => { l[i].name = e.target.value })} /></label>
+            <label>Priority
+              <span><input className="input bp-narrow" type="number" aria-label="Alarm priority" min={conventions?.alarmPriorityMin} max={conventions?.alarmPriorityMax}
+                value={a.priority} onChange={(e) => onChange((l) => { l[i].priority = Number(e.target.value) })} />
+                <span className={`alarm-band alarm-band-${(levelOf(conventions, a.priority) ?? 'caution').toLowerCase()}`}>{levelOf(conventions, a.priority)}</span></span>
+            </label>
+            <label className="checkbox"><input type="checkbox" aria-label="PLC reactive" checked={a.plcReactive}
+              onChange={(e) => onChange((l) => { l[i].plcReactive = e.target.checked; if (!e.target.checked) { l[i].latched = false; l[i].onTransition = null } })} />PLC reactive</label>
+            <label className="bp-wide">Message<input className="input" aria-label="Alarm message" value={a.message} onChange={(e) => onChange((l) => { l[i].message = e.target.value })} /></label>
+            <label>Trigger<select className="input" aria-label="Alarm trigger" value={a.trigger} onChange={(e) => onChange((l) => { l[i].trigger = e.target.value as AlarmTrigger })}>
+              {(Object.keys(triggerLabels) as AlarmTrigger[]).map((t) => <option key={t} value={t}>{triggerLabels[t]}</option>)}
+            </select></label>
+            <label>On-delay (s)<input className="input bp-narrow" type="number" min={0} step={0.1} aria-label="On-delay" value={a.onDelaySeconds}
+              onChange={(e) => onChange((l) => { l[i].onDelaySeconds = Number(e.target.value) })} /></label>
+            {a.trigger === 'State' && expr(i, 'condition', 'Condition', '[STS.state] == Running && ![FIN.feedback]')}
+            {a.trigger === 'Range' && <>
+              {expr(i, 'input', 'Input', '[FIN.temperature]')}
+              {expr(i, 'highAlarm', 'High alarm')}{expr(i, 'highWarning', 'High warning')}{expr(i, 'highCaution', 'High caution')}
+              {expr(i, 'lowCaution', 'Low caution')}{expr(i, 'lowWarning', 'Low warning')}{expr(i, 'lowAlarm', 'Low alarm')}
+            </>}
+            {a.trigger === 'Timeout' && <>
+              <label>Mode<select className="input" aria-label="Timeout mode" value={a.timeoutMode} onChange={(e) => onChange((l) => { l[i].timeoutMode = e.target.value as BpAlarm['timeoutMode'] })}>
+                <option value="Running">Running: while running, the condition must become true in time</option>
+                <option value="TriggerStop">Trigger/stop: a rising trigger opens the window, stop cancels it</option>
+              </select></label>
+              {a.timeoutMode === 'Running' ? expr(i, 'running', 'Running', '[STS.state] == Starting') : <>{expr(i, 'triggerExpr', 'Trigger')}{expr(i, 'stop', 'Stop / reset')}</>}
+              {expr(i, 'condition', 'Condition (must become true)', '[FIN.feedback]')}
+              {expr(i, 'timeout', 'Timeout (s)', '5 or [PAR.max_time]')}
+            </>}
+            {a.plcReactive && <>
+              <label className="checkbox"><input type="checkbox" aria-label="Latched" title="Stays active until CMD.reset" checked={a.latched}
+                onChange={(e) => onChange((l) => { l[i].latched = e.target.checked })} />Latched until reset</label>
+              <label>On transition<select className="input" aria-label="On transition" value={a.onTransition ?? ''} onChange={(e) => onChange((l) => { l[i].onTransition = e.target.value || null })}>
+                <option value="">— any time —</option>{bp.transitions.map((t) => <option key={t.name}>{t.name}</option>)}</select></label>
+            </>}
+            <div className="bp-wide"><button className="button button-small" onClick={() => onChange((l) => { l.splice(i, 1) })}>Remove alarm</button></div>
+          </div>
+        </fieldset>
+      ))}
+      <div className="bp-row-actions">
+        <button className="button button-small" onClick={() => onChange((l) => {
+          l.push(newAlarm(uniqueName('Alarm', l.map((a) => a.name)), conventions?.defaultAlarmPriority ?? 25))
+        })}>+ Alarm</button>
       </div>
     </div>
   )

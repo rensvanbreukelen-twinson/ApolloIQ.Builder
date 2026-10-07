@@ -7,6 +7,7 @@ export type ConfigCm = {
   id: string
   name: string
   path: string
+  blueprintId: string
   blueprint: string
   description: string
   position: Position | null
@@ -16,12 +17,13 @@ export type ConfigCm = {
   inputs: string[]
 }
 
-export type ConfigRole = { role: string; blueprint: string; controlModuleId: string | null }
+export type ConfigRole = { role: string; blueprintId: string; blueprint: string; controlModuleId: string | null }
 
 export type ConfigUnit = {
   id: string
   name: string
   path: string
+  blueprintId: string
   blueprint: string
   description: string
   position: Position | null
@@ -60,8 +62,8 @@ const base = (id: string) => `/api/projects/${id}`
 export const configuratorApi = {
   view: (id: string, folderId: string | null) =>
     request<ConfigView>('GET', `${base(id)}/configurator${folderId ? `?folder=${folderId}` : ''}`),
-  createUnit: (id: string, name: string, parentId: string | null, blueprint: string) =>
-    request<TreeNode>('POST', `${base(id)}/units`, { name, parentId, blueprint }),
+  createUnit: (id: string, name: string, parentId: string | null, blueprintId: string) =>
+    request<TreeNode>('POST', `${base(id)}/units`, { name, parentId, blueprintId }),
   setMember: (id: string, unitId: string, role: string, controlModuleId: string | null) =>
     request<void>('PUT', `${base(id)}/units/${unitId}/roles/${encodeURIComponent(role)}`, { controlModuleId }),
   layout: (id: string, positions: { id: string; x: number; y: number }[]) =>

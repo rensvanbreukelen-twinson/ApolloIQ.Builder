@@ -1,6 +1,6 @@
-import { useEffect, useId, useState } from 'react'
-import { ApiError, api } from '../api/client'
-import type { HmiAddressMode, HmiExportProfile } from '../api/types'
+import { useEffect, useState } from 'react'
+import { api } from '../api/client'
+import type { ExportCheck } from '../api/types'
 import { Modal } from './Modal'
 
 type Props = {
@@ -9,99 +9,94 @@ type Props = {
   onClose: () => void
 }
 
-const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-function download(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
+/**
+ * Export to SCADA: checks the project, lists the blueprints with their versions (a blueprint that changed since the last
+ * export without a new version blocks the export), shows errors and warnings, and downloads <project>.apolloiq.json.
+ */
 export function ExportDialog({ projectId, projectName, onClose }: Props) {
-  const [profile, setProfile] = useState<HmiExportProfile | null>(null)
-  const [connectionId, setConnectionId] = useState('')
-  const [scanRate, setScanRate] = useState('1000')
-  const [address, setAddress] = useState<HmiAddressMode>('Path')
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [check, setCheck] = useState<ExportCheck | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState(false)
-  const ids = { connection: useId(), scanRate: useId(), address: useId() }
+  const [done, setDone] = useState<string | null>(null)
+
+  const runCheck = () => api.exportCheck(projectId).then((c) => { setCheck(c); setError(null) }).catch((reason: Error) => setError(reason.message))
 
   useEffect(() => {
-    api.hmiProfile(projectId).then((loaded) => {
-      setProfile(loaded)
-      setConnectionId(loaded.connectionId ?? '')
-      setScanRate(String(loaded.scanRateMs))
-      setAddress(loaded.address)
-    }).catch((reason: Error) => setErrors({ form: reason.message }))
+    let cancelled = false
+    api.exportCheck(projectId).then((c) => { if (!cancelled) setCheck(c) }).catch((reason: Error) => { if (!cancelled) setError(reason.message) })
+    return () => { cancelled = true }
   }, [projectId])
 
-  const trimmed = connectionId.trim()
-  const localErrors: Record<string, string> = {}
-  if (trimmed && !guid.test(trimmed)) localErrors.connectionId = 'Use the connection ID from the HMI project, for example c1d2e3f4-a5b6-7890-cdef-111122223333.'
-  if (!/^\d+$/.test(scanRate)) localErrors.scanRateMs = 'Enter a whole number of milliseconds.'
-  const shown = { ...errors, ...localErrors }
-  const valid = profile !== null && Object.keys(localErrors).length === 0
-
-  const exportTags = async (scada = false) => {
+  const download = async () => {
     setBusy(true)
-    setErrors({})
-    setDone(false)
     try {
-      await api.saveHmiProfile(projectId, trimmed || null, Number(scanRate), address)
-      if (scada) download(await api.downloadScada(projectId), 'apolloiq-scada.json')
-      else download(await api.downloadHmiTags(projectId), 'tags.json')
-      setDone(true)
+      const blob = await api.exportToScada(projectId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = check?.fileName ?? `${projectName}.apolloiq.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      setDone(link.download)
+      await runCheck()
     } catch (reason) {
-      if (reason instanceof ApiError && reason.field) setErrors({ [reason.field]: reason.message })
-      else setErrors({ form: reason instanceof Error ? reason.message : String(reason) })
+      setError((reason as Error).message)
     } finally {
       setBusy(false)
     }
   }
 
+  const blocked = !check || check.errors.length > 0
+
   return (
-    <Modal
-      title={`Export for the HMI · ${projectName}`}
-      onClose={onClose}
-      wide
-      footer={
-        <>
-          <button className="button" onClick={onClose}>{done ? 'Close' : 'Cancel'}</button>
-          <button className="button" disabled={!valid || busy} onClick={() => void exportTags()}>Download tags.json</button>
-          <button className="button button-primary" disabled={!valid || busy} onClick={() => void exportTags(true)}>Download SCADA project</button>
-        </>
-      }
-    >
+    <Modal title={`Export ${projectName} to SCADA`} onClose={onClose} wide
+      footer={<>
+        <button className="button" onClick={() => void runCheck()}>Check again</button>
+        <span className="spacer" />
+        <button className="button" onClick={onClose}>Close</button>
+        <button className="button button-primary" disabled={blocked || busy} onClick={() => void download()}>Download for SCADA</button>
+      </>}>
       <p className="muted">
-        <strong>SCADA project</strong> (<code>apolloiq-scada.json</code>): {profile ? profile.tagCount : '…'} tags plus the CMs, Equipment modules, Units, alarms and the interlock lines per object (Switch on, Switch off, Trip). Import it in the HMI engineer view (Tags › Import Builder project). <code>tags.json</code> contains the tags only.
+        SCADA imports the file <code>{check?.fileName ?? `${projectName}.apolloiq.json`}</code>: the blueprints the project uses (tags, states, alarms,
+        interlock texts) and every CM, Equipment module and Unit. A blueprint that changed since the last export needs a new version first.
       </p>
-      <div className="field">
-        <label className="field-label" htmlFor={ids.connection}>Connection ID</label>
-        <input id={ids.connection} className={shown.connectionId ? 'input input-error mono' : 'input mono'} value={connectionId}
-          spellCheck={false} placeholder="(none)" onChange={(event) => { setConnectionId(event.target.value); setDone(false) }} />
-        <span className="field-hint">{shown.connectionId ?? 'Every tag is assigned to this connection from connections.json of the HMI project.'}</span>
-      </div>
-      <div className="field">
-        <label className="field-label" htmlFor={ids.scanRate}>Scan rate (ms)</label>
-        <input id={ids.scanRate} className={shown.scanRateMs ? 'input input-error' : 'input'} value={scanRate} inputMode="numeric"
-          onChange={(event) => { setScanRate(event.target.value); setDone(false) }} />
-        <span className="field-hint">{shown.scanRateMs ?? 'Between 50 and 3 600 000 ms.'}</span>
-      </div>
-      <div className="field">
-        <label className="field-label" htmlFor={ids.address}>Address</label>
-        <select id={ids.address} className="input" value={address}
-          onChange={(event) => { setAddress(event.target.value as HmiAddressMode); setDone(false) }}>
-          <option value="Path">Tag path, for example PMS.GEN1.STS.state</option>
-          <option value="SymbolKey">Symbol key, for example T_3F9A2C0B11D4</option>
-        </select>
-        {shown.address && <span className="field-hint field-hint-error">{shown.address}</span>}
-      </div>
-      {shown.form && <p className="form-error">{shown.form}</p>}
-      {done && <p className="form-success">tags.json downloaded. The settings are saved with the project.</p>}
+      {error && <p className="form-error">{error}</p>}
+      {done && <div className="banner banner-info">Downloaded {done}. The versions are recorded for the next export.</div>}
+      {!check && !error && <p className="muted">Checking…</p>}
+      {check && (
+        <>
+          <table className="grid">
+            <thead><tr><th>Blueprint</th><th>Version</th><th>Last export</th><th /></tr></thead>
+            <tbody>
+              {check.blueprints.map((b) => {
+                const unbumped = b.changedSinceLastExport && b.version === b.lastExportedVersion
+                return (
+                  <tr key={b.id} className={unbumped ? 'export-unbumped' : undefined}>
+                    <td className="mono">{b.name}</td>
+                    <td className="mono">{b.version}</td>
+                    <td className="mono muted">{b.lastExportedVersion ?? '—'}</td>
+                    <td>{unbumped ? <b className="form-error">changed — raise the version</b> : b.changedSinceLastExport ? 'changed, new version' : b.lastExportedVersion ? 'unchanged' : 'first export'}</td>
+                  </tr>
+                )
+              })}
+              {check.blueprints.length === 0 && <tr><td colSpan={4} className="empty">The project has no CMs, Equipment modules or Units yet.</td></tr>}
+            </tbody>
+          </table>
+          {check.errors.length > 0 && (
+            <div className="banner banner-error">
+              <b>The export is blocked:</b>
+              <ul>{check.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+            </div>
+          )}
+          {check.warnings.length > 0 && (
+            <div className="banner banner-warning">
+              <b>Not carried over to SCADA:</b>
+              <ul>{check.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+            </div>
+          )}
+          {check.errors.length === 0 && check.warnings.length === 0 && <p className="muted">No problems found.</p>}
+        </>
+      )}
     </Modal>
   )
 }

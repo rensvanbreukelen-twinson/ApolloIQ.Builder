@@ -1,16 +1,13 @@
 export type ApiErrorBody = { code: string; message: string; field?: string | null }
 
-export type OptionalTag = { key: string; description: string; addsTags: number }
-
+/** A published CM blueprint, as the New control module dialog lists it. */
 export type CmType = {
+  id: string
   name: string
   version: string
   description: string
   tagCount: number
-  optionalTags: OptionalTag[]
 }
-
-export type LibraryError = { file: string; path: string; message: string; line?: number | null }
 
 export type ProjectSummary = { id: string; name: string }
 
@@ -24,6 +21,7 @@ export type TreeNode = {
   kind: NodeKind
   path: string
   parentId: string | null
+  blueprintId: string | null
   typeName: string | null
   typeVersion: string | null
   tagCount: number
@@ -57,15 +55,6 @@ export type TagFilter = {
   search?: string
 }
 
-export type HmiAddressMode = 'Path' | 'SymbolKey'
-
-export type HmiExportProfile = {
-  connectionId: string | null
-  scanRateMs: number
-  address: HmiAddressMode
-  tagCount: number
-}
-
 export type InterlockKind = 'SwitchOn' | 'SwitchOff' | 'Trip'
 
 export type TripEscalation = 'None' | 'EM' | 'Unit'
@@ -79,7 +68,7 @@ export type InterlockRule = {
   text: string
   generatedText: string
   alarm: string | null
-  severity: number
+  priority: number
   escalate: TripEscalation
   error: string | null
 }
@@ -102,22 +91,26 @@ export type InterlockRuleInput = {
   condition: string
   text: string | null
   alarm: string | null
-  severity: number | null
+  priority: number | null
   escalate: TripEscalation | null
 }
 
 export type InterlockSummary = { hasInterlocks: boolean; defined: number; switchOn: number; switchOff: number; trips: number }
 
+/** An alarm of a CM; the priority can be overridden per CM. */
 export type AlarmDefinition = {
+  id: string
   name: string
-  severity: number
-  defaultSeverity: number
-  band: string
-  message: Record<string, string>
+  priority: number
+  defaultPriority: number
+  level: 'Caution' | 'Warning' | 'Alarm'
+  message: string
+  trigger: 'State' | 'Range' | 'Timeout' | 'PlcByte'
   condition: string
-  latch: string
-  runsOn: string
+  plcReactive: boolean
+  latched: boolean
   onTransition: string | null
+  source: 'Blueprint' | 'StateTimeout' | 'Trip' | 'UnitOverride' | 'StuckInput'
   activeTag: string | null
 }
 
@@ -125,15 +118,10 @@ export type WireMode = 'On' | 'Off' | 'Toggle' | 'Maintained' | 'Direct'
 
 export type CommandWire = { sourceId?: string; source: string; mode: WireMode; command: string | null }
 
-export type PicRow = {
-  name: string
-  source: 'Hardwired' | 'Hmi' | 'Auto'
-  kind: 'Hold' | 'Pulse'
-  on: number | null
-  off: number | null
-  inAuto: 'Normal' | 'Only' | 'Ignore' | 'Override'
-  onTag?: string | null
-  offTag?: string | null
+/** The check before an export to SCADA. Errors block the download, warnings name what does not reach SCADA. */
+export type ExportCheck = {
+  errors: string[]
+  warnings: string[]
+  blueprints: { id: string; name: string; version: string; changedSinceLastExport: boolean; lastExportedVersion: string | null }[]
+  fileName: string
 }
-
-export type PicSettings = { onLabel: string; offLabel: string; rows: PicRow[]; labelPairs?: string[] }

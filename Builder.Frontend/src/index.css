@@ -1138,3 +1138,24 @@ code,
 .il-trip-row .input { width: auto; }
 .il-trip-row input[aria-label="Trip alarm"] { width: 12rem; }
 .il-trip-row input[aria-label="Severity"] { width: 4.5rem; }
+
+.banner-info {
+  background: #e5eefa;
+}
+
+.export-unbumped td {
+  background: #fde8e7;
+}
+
+.bp-version {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.bp-alarm {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+}

@@ -20,6 +20,8 @@ export type SimControlModule = {
   type: string
   state: number
   stateName: string
+  /** The state's display text (the object's own state text, else the category). */
+  stateText?: string
   stateSeconds: number
   enteredCycle?: number
 }
@@ -52,6 +54,19 @@ type StateChangedMessage = { cycle: number; controlModule: string; from: number;
 
 type DiagnosticMessage = { cycle: number; controlModule: string; message: string }
 
+/** An alarm in the simulation: PLC reactive ones from the PLC logic, the others evaluated as SCADA will. */
+export type SimAlarm = {
+  object: string
+  name: string
+  priority: number
+  level: 'Caution' | 'Warning' | 'Alarm'
+  message: string
+  plcReactive: boolean
+  source: string
+  active: boolean
+  rangeLevel: 'Caution' | 'Warning' | 'Alarm' | null
+}
+
 export type SimLink = { id: string; from: string; to: string; protocol: string; class: string; down: boolean; tags: number }
 
 export type TcpLink = { port: number | null; clients: number; projectId: string | null }
@@ -79,6 +94,7 @@ const base = (projectId: string) => `/api/projects/${projectId}/simulation`
 export const simulationApi = {
   state: (projectId: string) => request<SimulationState>('GET', base(projectId)),
   tags: (projectId: string) => request<SimTag[]>('GET', `${base(projectId)}/tags`),
+  alarms: (projectId: string) => request<SimAlarm[]>('GET', `${base(projectId)}/alarms`),
   start: (projectId: string) => request<SimulationState>('POST', `${base(projectId)}/start`),
   pause: (projectId: string) => request<SimulationState>('POST', `${base(projectId)}/pause`),
   step: (projectId: string, cycles: number) => request<SimulationState>('POST', `${base(projectId)}/step`, { cycles }),
@@ -161,7 +177,7 @@ export function useSimulation(projectId: string, revision: number) {
       setState((current) => current && {
         ...current,
         controlModules: current.controlModules.map((cm) => cm.path === change.controlModule
-          ? { ...cm, state: change.to, stateName: change.toName ?? String(change.to), stateSeconds: 0, enteredCycle: change.cycle + 1 }
+          ? { ...cm, state: change.to, stateName: change.toName ?? String(change.to), stateText: undefined, stateSeconds: 0, enteredCycle: change.cycle + 1 }
           : cm),
       })
       addEvent(change.cycle, `${change.controlModule}: ${change.from} → ${change.to} ${change.toName ?? ''} (${change.transition})`, 'state')

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
-import { useConventions } from '../api/conventions'
+import { levelOf, useConventions } from '../api/conventions'
 import type { InterlockKind, InterlockRule, ObjectInterlocks, TripEscalation } from '../api/types'
 import { ExpressionInput } from './ExpressionInput'
 import { Modal } from './Modal'
@@ -19,7 +19,7 @@ type Draft = {
   condition: string
   text: string
   alarm: string
-  severity: number
+  priority: number
   escalate: TripEscalation
   generatedText: string
   error: string | null
@@ -44,7 +44,7 @@ function toDraft(rule: InterlockRule): Draft {
     condition: rule.condition,
     text: rule.text,
     alarm: rule.alarm ?? '',
-    severity: rule.severity,
+    priority: rule.priority,
     escalate: rule.escalate,
     generatedText: rule.generatedText,
     error: rule.error,
@@ -60,12 +60,14 @@ export function InterlocksDialog({ projectId, objectId, title, onClose, onChange
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [tags, setTags] = useState<string[]>([])
+  const [states, setStates] = useState<Record<string, string[]>>({})
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.objectInterlocks(projectId, objectId), api.tags(projectId, {})])
-      .then(([loaded, allTags]) => {
+    Promise.all([api.objectInterlocks(projectId, objectId), api.tags(projectId, {}), api.states(projectId)])
+      .then(([loaded, allTags, objectStates]) => {
         if (cancelled) return
+        setStates(objectStates)
         setData(loaded)
         setDrafts(loaded.interlocks.map(toDraft))
         setTags(allTags.map((t) => t.path))
@@ -104,7 +106,7 @@ export function InterlocksDialog({ projectId, objectId, title, onClose, onChange
         condition: d.condition,
         text: d.text.trim() || null,
         alarm: d.kind === 'Trip' ? d.alarm.trim() || null : null,
-        severity: d.kind === 'Trip' ? d.severity : null,
+        priority: d.kind === 'Trip' ? d.priority : null,
         escalate: d.kind === 'Trip' ? d.escalate : null,
       })))
       setData(result)
@@ -166,8 +168,8 @@ export function InterlocksDialog({ projectId, objectId, title, onClose, onChange
                 </td>
                 <td>
                   <ExpressionInput className={`input mono bp-expr ${d.error ? 'input-error' : ''}`} ariaLabel="Condition" bracketed value={d.condition}
-                    placeholder={d.kind === 'Trip' ? 'NOT [PMS.GEN1.is_running]' : '[PMS.GEN1.is_running]'}
-                    onChange={(v) => { change(i, { condition: v, error: null }); void validate(i, v) }} suggestions={suggestions} />
+                    placeholder={d.kind === 'Trip' ? '![PMS.GEN1.is_running]' : '[PMS.GEN1.is_running] && [PMS.CB1.STS.state] != Tripped'}
+                    onChange={(v) => { change(i, { condition: v, error: null }); void validate(i, v) }} suggestions={suggestions} states={(reference) => states[reference] ?? []} />
                   {d.error && <div className="form-error">{d.error}</div>}
                 </td>
                 <td><input className="input" aria-label="HMI text" placeholder={d.generatedText || 'generated from the condition'} value={d.text} onChange={(e) => change(i, { text: e.target.value })} /></td>
@@ -178,7 +180,7 @@ export function InterlocksDialog({ projectId, objectId, title, onClose, onChange
                   <td />
                   <td colSpan={4}>
                     <label>Alarm <input className="input mono" aria-label="Trip alarm" placeholder={`Trip${drafts.slice(0, i + 1).filter((x) => x.kind === 'Trip').length}`} value={d.alarm} onChange={(e) => change(i, { alarm: e.target.value })} /></label>
-                    <label>Severity <input className="input bp-narrow" aria-label="Severity" type="number" min={conventions?.severityMin} max={conventions?.severityMax} value={d.severity} onChange={(e) => change(i, { severity: Number(e.target.value) })} /></label>
+                    <label>Priority <input className="input bp-narrow" aria-label="Priority" type="number" min={conventions?.alarmPriorityMin} max={conventions?.alarmPriorityMax} value={d.priority} onChange={(e) => change(i, { priority: Number(e.target.value) })} /> <span className="muted">{levelOf(conventions, d.priority)}</span></label>
                     <label>Escalate <select className="input" aria-label="Escalate" value={d.escalate} onChange={(e) => change(i, { escalate: e.target.value as TripEscalation })}>
                       <option value="None">None: only the target trips</option><option value="EM">EM: its Equipment module goes to Shutdown</option><option value="Unit">Unit: its Unit goes to Shutdown</option>
                     </select></label>
@@ -195,7 +197,7 @@ export function InterlocksDialog({ projectId, objectId, title, onClose, onChange
             <button key={k} className="button button-small" onClick={() => {
               const first = targets.find((t) => t.hasInterlocks)
               const targetId = !first || first.id === objectId ? null : first.id
-              setDrafts((list) => [...list, { targetId, kind: k, condition: '', text: '', alarm: '', severity: conventions?.defaultSeverity ?? 20, escalate: 'None', generatedText: '', error: null }])
+              setDrafts((list) => [...list, { targetId, kind: k, condition: '', text: '', alarm: '', priority: conventions?.defaultAlarmPriority ?? 25, escalate: 'None', generatedText: '', error: null }])
               setDirty(true)
             }}>+ {kindLabels[k]}</button>
           ))}
