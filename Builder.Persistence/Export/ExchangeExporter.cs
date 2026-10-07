@@ -235,6 +235,7 @@ public static class ExchangeExporter
             Id = obj.Id,
             Name = obj.Name,
             BlueprintId = blueprint.Id,
+            Description = obj switch { ControlModule c => c.Description, UnitInstance u => u.Description, _ => "" },
             ParentId = obj.ParentId is { } parent && project.Find(parent) is UnitInstance ? parent : null,
             Device = obj is ControlModule { ExecutionDeviceId: { } device } ? project.Topology.Device(device)?.Name : null
         };

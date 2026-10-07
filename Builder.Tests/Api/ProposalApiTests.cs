@@ -96,6 +96,7 @@ public sealed class ProposalApiTests : IAsyncLifetime
         var file = ExchangeJson.Read(await export.Content.ReadAsStringAsync(Ct));
         Assert.Equal(["DirtyWaterTank", "Pump"], file.Blueprints.Select(b => b.Name).Order());
         Assert.Equal(["DirtyWaterTank", "TransferPump"], file.Instances.Select(i => i.Name));
+        Assert.Equal("Dirty water transfer pump", file.Instances.Single(i => i.Name == "TransferPump").Description);
 
         var again = await _server.Post<ProposalResultDto>(Url, new CreateProposalRequest("Same again", null, "AI", DesignTests.DirtyWaterJson(), null));
         Assert.Empty(again.Proposal.Items);
