@@ -26,6 +26,7 @@ public static class BuilderApp
         builder.Services.AddSingleton(cmLibrary);
         builder.Services.AddSingleton(new ProjectWorkspace(projectsRoot));
         builder.Services.AddSingleton(blueprints);
+        builder.Services.AddSingleton<ProposalService>();
         builder.Services.AddSingleton<SimulationHost>();
         builder.Services.AddSingleton<SimulatorTcpService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SimulatorTcpService>());
@@ -54,6 +55,7 @@ public static class BuilderApp
         app.MapConfiguratorApi();
         app.MapCommandInputApi();
         app.MapExportApi();
+        app.MapProposalApi();
         app.MapHub<SimulationHub>("/hubs/simulation");
         return app;
     }
