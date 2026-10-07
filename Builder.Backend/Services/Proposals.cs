@@ -11,7 +11,7 @@ public static class ProposalStatus
     public const string PartlyAccepted = "PartlyAccepted";
     public const string Accepted = "Accepted";
     public const string Rejected = "Rejected";
-    public const string Closed = "Closed";
+    public const string Superseded = "Superseded";
 }
 
 public static class ItemStates
@@ -47,6 +47,9 @@ public sealed class Proposal
     /// <summary>The whole proposal was rejected or closed: no item can be accepted any more.</summary>
     public bool Closed { get; set; }
 
+    /// <summary>The proposal that replaces this one: a new proposal named this one in <c>supersedes</c>.</summary>
+    public Guid? SupersededBy { get; set; }
+
     public List<ProposalVersion> Versions { get; set; } = [];
     public Dictionary<string, ItemState> ItemStates { get; set; } = [];
     public List<ReviewComment> Comments { get; set; } = [];
@@ -78,6 +81,9 @@ public sealed class ItemState
     public int Version { get; set; }
     public DateTimeOffset At { get; set; }
     public string By { get; set; } = "";
+
+    /// <summary>The item as it was accepted (computed against the project at that moment).</summary>
+    public ChangeItem? Item { get; set; }
 }
 
 public sealed class ReviewComment

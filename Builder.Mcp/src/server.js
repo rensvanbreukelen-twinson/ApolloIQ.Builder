@@ -101,10 +101,11 @@ tool('validate_design', 'Checks a design fragment against the project WITHOUT op
   })
 
 tool('create_proposal', 'Opens a proposal (like a pull request) from a design fragment. The engineer reviews and accepts it in the Builder. Put open questions and assumptions in the description (markdown) and in the design\'s questions.',
-  { project, title: z.string(), description: z.string().describe('Markdown: what the proposal does, assumptions, open questions'), design },
-  async ({ project: reference, title, description, design: yaml }) => {
+  { project, title: z.string(), description: z.string().describe('Markdown: what the proposal does, assumptions, open questions'), design,
+    supersedes: z.string().optional().describe('Id of an earlier proposal this one replaces; it gets the status Superseded') },
+  async ({ project: reference, title, description, design: yaml, supersedes }) => {
     const p = await resolveProject(reference)
-    const result = await call('POST', `/api/projects/${p.id}/proposals`, { title, description, author: 'AI', design: fromYaml(yaml) })
+    const result = await call('POST', `/api/projects/${p.id}/proposals`, { title, description, author: 'AI', design: fromYaml(yaml), supersedes })
     return {
       proposal: result.proposal.id,
       title: result.proposal.title,

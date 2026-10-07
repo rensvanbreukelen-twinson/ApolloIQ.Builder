@@ -58,7 +58,7 @@ Restart Claude after changing the file. Node 20 or later.
 | `read_design` | The project as a design (YAML); `path` for one subtree, e.g. `Bilge.DirtyWaterTank`. |
 | `list_blueprints`, `read_blueprint` | The blueprint library; one blueprint as a design. |
 | `validate_design` | The change items a fragment makes and the validation of accepting them all, **without** a proposal. Iterate with it. |
-| `create_proposal` | Opens a proposal: title, description (markdown; assumptions and open questions), design fragment. Returns the items and the validation of accepting everything. |
+| `create_proposal` | Opens a proposal: title, description (markdown; assumptions and open questions), design fragment, optionally `supersedes` (an earlier proposal it replaces). Returns the items and the validation of accepting everything. |
 | `update_proposal` | A new version from a new (whole) fragment with a note; comments stay, changed items are marked. |
 | `list_proposals`, `read_proposal` | Status, items (Open / Accepted / Rejected), conflicts with the current project, versions, comments. `diffs: true` adds before / after. |
 | `read_review_comments` | The engineer's comments, per item or on the whole proposal. |

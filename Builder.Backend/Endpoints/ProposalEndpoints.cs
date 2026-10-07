@@ -5,7 +5,7 @@ using Builder.Design;
 
 namespace Builder.Backend.Endpoints;
 
-public sealed record CreateProposalRequest(string? Title, string? Description, string? Author, JsonNode? Design);
+public sealed record CreateProposalRequest(string? Title, string? Description, string? Author, JsonNode? Design, Guid? Supersedes);
 
 public sealed record UpdateProposalRequest(JsonNode? Design, string? Note, string? Author, string? Title, string? Description);
 
@@ -43,7 +43,7 @@ public static class ProposalEndpoints
 
         group.MapPost("", (Guid projectId, CreateProposalRequest request, ProposalService proposals) => Guarded(() =>
         {
-            var result = proposals.Create(projectId, request.Title, request.Description, request.Author, request.Design);
+            var result = proposals.Create(projectId, request.Title, request.Description, request.Author, request.Design, request.Supersedes);
             return Results.Created($"/api/projects/{projectId}/proposals/{result.Proposal.Id}", result);
         }));
 

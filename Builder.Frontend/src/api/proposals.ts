@@ -2,7 +2,7 @@ import { ApiError } from './client'
 
 export type ItemState = 'Open' | 'Accepted' | 'Rejected'
 
-export type ProposalStatus = 'Open' | 'PartlyAccepted' | 'Accepted' | 'Rejected' | 'Closed'
+export type ProposalStatus = 'Open' | 'PartlyAccepted' | 'Accepted' | 'Rejected' | 'Superseded'
 
 /** A change item of a proposal as the review shows it. Before and after are design fragments (JSON of the YAML format). */
 export type ReviewItem = {
@@ -47,6 +47,7 @@ export type Proposal = {
   items: ReviewItem[]
   comments: ReviewComment[]
   counts: { open: number; accepted: number; rejected: number; conflicts: number }
+  supersededBy: string | null
 }
 
 export type ProposalSummary = { id: string; title: string; author: string; status: ProposalStatus; createdAt: string; updatedAt: string; version: number; openItems: number; items: number }

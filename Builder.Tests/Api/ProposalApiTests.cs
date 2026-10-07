@@ -32,7 +32,21 @@ public sealed class ProposalApiTests : IAsyncLifetime
     private string Url => $"/api/projects/{_project}/proposals";
 
     private async Task<ProposalResultDto> Create() =>
-        await _server.Post<ProposalResultDto>(Url, new CreateProposalRequest("Dirty water tank", "Open questions below.", "AI", DesignTests.DirtyWaterJson()));
+        await _server.Post<ProposalResultDto>(Url, new CreateProposalRequest("Dirty water tank", "Open questions below.", "AI", DesignTests.DirtyWaterJson(), null));
+
+    [Fact]
+    public async Task ANewProposalSupersedesAnOldOne()
+    {
+        var old = (await Create()).Proposal;
+        var replacement = await _server.Post<ProposalResultDto>(Url,
+            new CreateProposalRequest("Dirty water tank, second try", "", "AI", DesignTests.DirtyWaterJson(), old.Id));
+        Assert.Equal(ProposalStatus.Open, replacement.Proposal.Status);
+        var superseded = await _server.Get<ProposalDto>($"{Url}/{old.Id}");
+        Assert.Equal(ProposalStatus.Superseded, superseded.Status);
+        Assert.Equal(replacement.Proposal.Id, superseded.SupersededBy);
+        var response = await _server.Client.PostAsJsonAsync($"{Url}/{old.Id}/accept", new SelectionRequest(["blueprint:Pump"], null), ApiServer.Json, Ct);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
 
     [Fact]
     public async Task CheckingADesignDoesNotChangeTheProject()
@@ -83,7 +97,7 @@ public sealed class ProposalApiTests : IAsyncLifetime
         Assert.Equal(["DirtyWaterTank", "Pump"], file.Blueprints.Select(b => b.Name).Order());
         Assert.Equal(["DirtyWaterTank", "TransferPump"], file.Instances.Select(i => i.Name));
 
-        var again = await _server.Post<ProposalResultDto>(Url, new CreateProposalRequest("Same again", null, "AI", DesignTests.DirtyWaterJson()));
+        var again = await _server.Post<ProposalResultDto>(Url, new CreateProposalRequest("Same again", null, "AI", DesignTests.DirtyWaterJson(), null));
         Assert.Empty(again.Proposal.Items);
     }
 

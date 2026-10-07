@@ -1174,9 +1174,12 @@ code,
 .pr-status-Open { background: var(--accent-soft); color: var(--accent); }
 .pr-status-PartlyAccepted { background: #fff4d6; color: #7a5a00; }
 .pr-status-Accepted { background: #e3f1e7; color: #2e7d32; }
-.pr-status-Rejected, .pr-status-Closed { background: #f6e3e3; color: var(--danger); }
+.pr-status-Rejected { background: #f6e3e3; color: var(--danger); }
+.pr-status-Superseded { background: #eceff3; color: var(--muted); }
 .pr-review { min-height: 0; }
-.pr-version { font-size: 12.5px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 10px; background: #fafbfc; }
+.pr-version-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--border); background: #fafbfc; font-size: 12.5px; }
+.pr-version { font-weight: 600; padding: 1px 8px; border: 1px solid var(--border-strong); border-radius: 10px; background: #fff; }
+.pr-version-history { margin-left: auto; }
 .pr-valid { background: #e3f1e7; color: #1e5b23; }
 .pr-checking { color: var(--muted); }
 .pr-notice { display: flex; align-items: center; gap: 8px; }

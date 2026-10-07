@@ -28,7 +28,7 @@ function rememberReviewer(name: string) {
   }
 }
 
-const statusText: Record<string, string> = { Open: 'Open', PartlyAccepted: 'Partly accepted', Accepted: 'Accepted', Rejected: 'Rejected', Closed: 'Closed' }
+const statusText: Record<string, string> = { Open: 'Open', PartlyAccepted: 'Partly accepted', Accepted: 'Accepted', Rejected: 'Rejected', Superseded: 'Superseded' }
 
 const when = (at: string) => new Date(at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 
@@ -271,8 +271,10 @@ function ProposalReview({ projectId, proposalId, reviewer, onChanged }: ReviewPr
 
   const latest = proposal.versions[proposal.versions.length - 1]
   const focused = focus ? items.get(focus) ?? null : null
-  const closed = proposal.status === 'Rejected' || proposal.status === 'Closed'
-  const commentsOf = (itemId: string | null) => proposal.comments.filter((c) => c.itemId === itemId)
+  const closed = proposal.status === 'Rejected' || proposal.status === 'Superseded'
+  /** Comments on an item; for null, the general ones and those on items that are no longer in the proposal. */
+  const commentsOf = (itemId: string | null) =>
+    proposal.comments.filter((c) => (itemId === null ? c.itemId === null || !items.has(c.itemId) : c.itemId === itemId))
 
   return (
     <div className="bp-editor pr-review">
@@ -280,11 +282,6 @@ function ProposalReview({ projectId, proposalId, reviewer, onChanged }: ReviewPr
         <span className="toolbar-title">{proposal.title}</span>
         <span className={`pr-status pr-status-${proposal.status}`}>{statusText[proposal.status] ?? proposal.status}</span>
         <span className="muted">by {proposal.author}, {when(proposal.createdAt)}</span>
-        <span className="pr-version" title={latest.note ?? undefined}>
-          Version {proposal.version}
-          {proposal.version > 1 && <> — {latest.changedItems + latest.newItems} item{latest.changedItems + latest.newItems === 1 ? '' : 's'} changed since version {proposal.version - 1}</>}
-          {latest.note && <span className="muted">: {latest.note}</span>}
-        </span>
         <span className="spacer" />
         <button className="button" disabled={closed || openIds.length === 0} onClick={() => select(openIds, true)}>Select all open</button>
         <button className="button button-primary" disabled={busy || closed || selection.size === 0 || checking || validation?.ok === false} onClick={() => void accept()}>
@@ -293,8 +290,17 @@ function ProposalReview({ projectId, proposalId, reviewer, onChanged }: ReviewPr
         <button className="button" disabled={busy || closed || selection.size === 0} onClick={() => void reject()}>Reject selected</button>
         <button className="button button-danger" disabled={busy || closed || proposal.counts.open === 0} onClick={() => void rejectProposal()}>Reject proposal</button>
       </div>
+      <div className="pr-version-bar">
+        <span className="pr-version">Version {proposal.version}</span>
+        {proposal.version > 1
+          ? <span>{latest.changedItems + latest.newItems} item{latest.changedItems + latest.newItems === 1 ? '' : 's'} changed since version {proposal.version - 1}
+            {latest.removedItems > 0 && <>, {latest.removedItems} dropped</>}{latest.note && <span className="muted"> — {latest.note}</span>}</span>
+          : <span className="muted">First version</span>}
+        {proposal.versions.length > 1 && <span className="muted pr-version-history">{proposal.versions.map((v) => `v${v.number} ${when(v.createdAt)}`).join(' · ')}</span>}
+      </div>
       {error && <div className="banner banner-error">{error}</div>}
-      {proposal.projectChanged && (
+      {proposal.supersededBy && <div className="banner banner-info">Superseded by a newer proposal; nothing in this one can be accepted any more.</div>}
+      {proposal.projectChanged && !closed && (
         <div className="banner banner-warning">The project changed since this version was made. The items are checked against the current project; conflicts are marked.</div>
       )}
       {proposal.problems.length > 0 && (
@@ -365,7 +371,7 @@ function ProposalReview({ projectId, proposalId, reviewer, onChanged }: ReviewPr
           </div>
           <div className="pr-card">
             <h3>Comments on the proposal</h3>
-            <Comments comments={commentsOf(null)} onAdd={(text) => comment(text, null)} placeholder="A comment for the agent about the whole proposal…" />
+            <Comments comments={commentsOf(null)} onAdd={(text) => comment(text, null)} placeholder="A comment for the agent about the whole proposal…" showItem />
           </div>
         </section>
         <section className="pr-detail">
@@ -420,7 +426,7 @@ function Diff({ before, after }: { before: unknown; after: unknown }) {
   )
 }
 
-function Comments({ comments, onAdd, placeholder }: { comments: ReviewComment[]; onAdd: (text: string) => Promise<void>; placeholder: string }) {
+function Comments({ comments, onAdd, placeholder, showItem }: { comments: ReviewComment[]; onAdd: (text: string) => Promise<void>; placeholder: string; showItem?: boolean }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -440,7 +446,10 @@ function Comments({ comments, onAdd, placeholder }: { comments: ReviewComment[];
     <div className="pr-comments">
       {comments.map((c) => (
         <div key={c.id} className="pr-comment">
-          <div className="muted pr-comment-head"><b>{c.author}</b> · {when(c.at)} · version {c.version}</div>
+          <div className="muted pr-comment-head">
+            <b>{c.author}</b> · {when(c.at)} · version {c.version}
+            {c.itemId && showItem && <> · on <span className="mono">{c.itemId}</span> (not in this version)</>}
+          </div>
           <div className="pr-comment-text">{c.text}</div>
         </div>
       ))}

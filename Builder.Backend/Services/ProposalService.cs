@@ -30,7 +30,7 @@ public sealed record ValidationDto(bool Ok, IReadOnlyList<string> Errors, IReadO
 public sealed record ProposalDto(Guid Id, string Title, string Description, string Author, string Status, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
     string BaseRevision, string CurrentRevision, bool ProjectChanged, int Version, IReadOnlyList<VersionSummaryDto> Versions,
     IReadOnlyList<DesignQuestion> Questions, IReadOnlyList<string> Problems, IReadOnlyList<string> Warnings, IReadOnlyList<ReviewItemDto> Items,
-    IReadOnlyList<ReviewComment> Comments, ProposalCountsDto Counts, JsonObject Design);
+    IReadOnlyList<ReviewComment> Comments, ProposalCountsDto Counts, JsonObject Design, Guid? SupersededBy);
 
 /// <summary>A proposal with the result of validating "accept everything that is open".</summary>
 public sealed record ProposalResultDto(ProposalDto Proposal, ValidationDto Validation);
@@ -80,7 +80,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
         });
     }
 
-    public ProposalResultDto Create(Guid projectId, string? title, string? description, string? author, JsonNode? designJson)
+    public ProposalResultDto Create(Guid projectId, string? title, string? description, string? author, JsonNode? designJson, Guid? supersedes = null)
     {
         if (string.IsNullOrWhiteSpace(title))
             throw new ProposalException(400, "invalid_proposal", "A proposal needs a title.");
@@ -111,7 +111,17 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
                 ]
             };
             proposal.Status = Status(proposal);
-            new ProposalFiles(session.Directory).Save(proposal);
+            var files = new ProposalFiles(session.Directory);
+            if (supersedes is { } replacedId)
+            {
+                var replaced = Load(session, replacedId);
+                replaced.SupersededBy = proposal.Id;
+                replaced.Closed = true;
+                replaced.UpdatedAt = now;
+                replaced.Status = Status(replaced);
+                files.Save(replaced);
+            }
+            files.Save(proposal);
             return Result(session, proposal);
         }
     }
@@ -175,6 +185,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
                 throw new ProposalException(409, "proposal_closed", "The proposal is rejected or closed.");
             var design = DesignDocument.Parse(proposal.Latest.Design);
             UndoRecord? undo = null;
+            var acceptedItems = new Dictionary<string, ChangeItem>();
             var result = session.Replace(project =>
             {
                 var blueprints = store.All();
@@ -182,6 +193,8 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
                 var applied = DesignApplier.Apply(plan, itemIds, project, blueprints);
                 if (!applied.Ok)
                     return ((Project?)null, applied);
+                foreach (var item in plan.Items.Where(i => itemIds.Contains(i.Id)))
+                    acceptedItems[item.Id] = item;
                 undo = new UndoRecord
                 {
                     ProposalId = proposal.Id, ProposalTitle = proposal.Title, ItemIds = [.. itemIds], At = DateTimeOffset.UtcNow,
@@ -202,7 +215,10 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
             var files = new ProposalFiles(session.Directory);
             files.SaveUndo(undo);
             foreach (var id in itemIds)
-                proposal.ItemStates[id] = new ItemState { State = ItemStates.Accepted, Version = proposal.Latest.Number, At = undo.At, By = undo.By };
+                proposal.ItemStates[id] = new ItemState
+                {
+                    State = ItemStates.Accepted, Version = proposal.Latest.Number, At = undo.At, By = undo.By, Item = acceptedItems.GetValueOrDefault(id)
+                };
             proposal.UpdatedAt = undo.At;
             proposal.KnownRevision = undo.RevisionAfter;
             proposal.Status = Status(proposal);
@@ -239,6 +255,8 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
         lock (_gate)
         {
             var proposal = Load(session, proposalId);
+            if (proposal.SupersededBy is not null)
+                throw new ProposalException(409, "proposal_superseded", "The proposal is superseded by another proposal.");
             foreach (var id in itemIds.Where(id => State(proposal, id) == ItemStates.Rejected))
                 proposal.ItemStates.Remove(id);
             proposal.Closed = false;
@@ -348,6 +366,8 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
         var accepted = ids.Count(id => State(proposal, id) == ItemStates.Accepted);
         var rejected = ids.Count(id => State(proposal, id) == ItemStates.Rejected);
         var open = ids.Count - accepted - rejected;
+        if (proposal.SupersededBy is not null)
+            return ProposalStatus.Superseded;
         if (proposal.Closed && accepted == 0)
             return ProposalStatus.Rejected;
         if (open == 0 || proposal.Closed)
@@ -356,7 +376,7 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
     }
 
     private static ProposalSummaryDto Summary(Proposal proposal) => new(proposal.Id, proposal.Title, proposal.Author, proposal.Status, proposal.CreatedAt,
-        proposal.UpdatedAt, proposal.Latest.Number, proposal.Latest.Items.Count(i => State(proposal, i.Id) == ItemStates.Open), proposal.Latest.Items.Count);
+        proposal.UpdatedAt, proposal.Latest.Number, proposal.Closed ? 0 : proposal.Latest.Items.Count(i => State(proposal, i.Id) == ItemStates.Open), proposal.Latest.Items.Count);
 
     /// <summary>
     /// The review: the latest version's items recomputed against the current project. An open item whose target changed since the
@@ -378,7 +398,8 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
             var state = State(proposal, stored.Id);
             if (state != ItemStates.Open || proposal.Closed)
             {
-                items.Add(Item(stored, proposal.Closed && state == ItemStates.Open ? ItemStates.Rejected : state, null, latest.Number));
+                var shown = proposal.ItemStates.GetValueOrDefault(stored.Id)?.Item ?? stored;
+                items.Add(Item(shown, proposal.Closed && state == ItemStates.Open ? ItemStates.Rejected : state, null, latest.Number));
                 continue;
             }
             if (!live.TryGetValue(stored.Id, out var current))
@@ -392,14 +413,14 @@ public sealed class ProposalService(ProjectWorkspace workspace, BlueprintStore s
             items.Add(Item(current, ItemStates.Open, "New: needed because the project changed since this version was made.", latest.Number));
         foreach (var version in proposal.Versions.Take(proposal.Versions.Count - 1).Reverse())
             foreach (var old in version.Items.Where(i => State(proposal, i.Id) == ItemStates.Accepted && items.All(x => x.Id != i.Id)))
-                items.Add(Item(old, ItemStates.Accepted, null, version.Number));
+                items.Add(Item(proposal.ItemStates[old.Id].Item ?? old, ItemStates.Accepted, null, version.Number));
         var counts = new ProposalCountsDto(items.Count(i => i.State == ItemStates.Open), items.Count(i => i.State == ItemStates.Accepted),
             items.Count(i => i.State == ItemStates.Rejected), items.Count(i => i.State == ItemStates.Open && i.Conflict is not null));
         var versions = proposal.Versions.Select(v => new VersionSummaryDto(v.Number, v.CreatedAt, v.Author, v.Note, v.Items.Count, v.ChangedItems.Count,
             v.NewItems.Count, v.RemovedItems.Count)).ToList();
         return new ProposalDto(proposal.Id, proposal.Title, proposal.Description, proposal.Author, proposal.Status, proposal.CreatedAt, proposal.UpdatedAt,
             proposal.BaseRevision, revision, revision != (string.IsNullOrEmpty(proposal.KnownRevision) ? latest.BaseRevision : proposal.KnownRevision), latest.Number, versions, plan.Questions, plan.Problems, plan.Warnings, items,
-            proposal.Comments, counts, latest.Design);
+            proposal.Comments, counts, latest.Design, proposal.SupersededBy);
     }
 }
 
