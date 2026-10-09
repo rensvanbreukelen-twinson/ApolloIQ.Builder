@@ -12,6 +12,7 @@ import { fromYaml, toYaml } from './yaml.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const designDocumentation = process.env.APOLLOIQ_DESIGN_DOCUMENTATION ?? path.resolve(here, '../../Documentation/Design')
+const designKit = process.env.APOLLOIQ_DESIGN_KIT ?? path.resolve(here, '../../Design kit')
 
 const server = new McpServer({ name: 'apolloiq-builder', version: '0.1.0' }, {
   instructions:
@@ -71,19 +72,19 @@ tool('list_blueprints', 'The blueprint library: name, kind, version, description
 tool('read_blueprint', 'One library blueprint as a design (YAML).', { name: z.string().describe('Blueprint name') },
   async ({ name }) => call('GET', `/api/blueprints/design?name=${encodeURIComponent(name)}`))
 
-tool('read_rules', 'The rules for designing (Documentation/Design/Rules.md) and the design format (Design format.md). Read this first.', {}, async () => {
-  const read = async (file) => {
+tool('read_rules', 'Read this first: the rules for AI (Design kit/Rules for AI.md), the functional description template, the design format and a worked example.', {}, async () => {
+  const read = async (folder, file) => {
     try {
-      return await readFile(path.join(designDocumentation, file), 'utf8')
+      return await readFile(path.join(folder, file), 'utf8')
     } catch {
-      return null
+      return `(${file} not found in ${folder})`
     }
   }
-  const rules = await read('Rules.md')
-  const format = await read('Design format.md')
   return [
-    '# Rules', rules ?? '(Rules.md is not written yet: follow the design format and the naming rules in it, and ask in questions when in doubt.)',
-    '', '# Design format', format ?? `(Design format.md not found in ${designDocumentation})`,
+    '# Rules for AI', await read(designKit, 'Rules for AI.md'),
+    '', '# Functional description template', await read(designKit, 'Functional description template.md'),
+    '', '# Design format', await read(designDocumentation, 'Design format.md'),
+    '', '# Example design (dirty water tank)', '```yaml', await read(designDocumentation, 'dirty-water.design.yaml'), '```',
   ].join('\n')
 })
 

@@ -1,20 +1,32 @@
 # ApolloIQ design rules
 
 Rules for an AI agent (or an engineer) that turns a functional description into a Builder project. Read together with
-[Design format.md](Design%20format.md) and the example [dirty-water.design.yaml](dirty-water.design.yaml).
+the [Design format](../Documentation/Design/Design%20format.md) and the example [dirty-water.design.yaml](../Documentation/Design/dirty-water.design.yaml).
 
 ## 1. Workflow
 
-1. Read the functional description completely, and the existing project (`read_design`) and library (`list_blueprints`).
-2. Reuse library blueprints where they fit. Make a new blueprint only for equipment that behaves differently.
-3. Write one design fragment; check it with `validate_design` until it has no errors.
-4. Open a proposal (`create_proposal`): a short title, a description of what you did, and every open question.
-5. Read the review comments (`read_review_comments`) and revise with `update_proposal`. Never change the project in another way.
+You work with the engineer in a chat, with the Builder tools (MCP server `apolloiq-builder`) connected.
+
+1. **Read.** `read_rules`, the functional description the engineer gives you, the project (`read_design`) and the
+   blueprint library (`list_blueprints`).
+2. **Ask.** Before building anything, ask the engineer every question the description leaves open, in the chat, in
+   one numbered list per round (what you need, why, and what you would assume). Repeat until nothing essential is
+   open. Small details may be assumed instead of asked: list them in `questions`.
+3. **Build.** Reuse library blueprints where they fit; make a new blueprint only for equipment that behaves
+   differently. Write one design (YAML, see [Design format](../Documentation/Design/Design%20format.md)) and check it with
+   `validate_design` until there are no errors.
+4. **Hand over.** `create_proposal` with a short title, what you built, and the remaining assumptions. Tell the engineer
+   to open the Builder, **Proposals** tab, and accept it; after that the states, transitions, alarms and interlocks are
+   visible in the Builder's normal views.
+5. **Change.** The engineer asks for changes in the chat or as comments on the proposal (`read_review_comments`). Make a
+   new design for the changes and open a new proposal (or `update_proposal` while the old one is still open).
+   Never change the project in another way.
 
 ## 2. Never guess
 
-- Every assumption goes in `questions` with what you assumed. Missing values (times, priorities, contact types,
-  limits) are assumptions too.
+- Ask about everything that changes the behaviour: what starts and stops equipment, what happens on a fault,
+  manual/auto, contact types (normally open or closed), alarm reactions.
+- Values you may assume without asking (and list in `questions`): times, limits, priorities, delays, descriptions.
 - Do not invent equipment, signals or alarms that the description does not mention, except the standard supervision
   of section 8 (feedback timeouts, overload, local/remote), which you add and list as an assumption.
 
@@ -117,37 +129,4 @@ Rules for an AI agent (or an engineer) that turns a functional description into 
 - Every state machine can reach every state and leave every non-final state.
 - Every assumption is in `questions`.
 
-## Functional description template (Obsidian)
-
-```markdown
----
-vessel: <name>
-system: <system>
-revision: <A>
----
-# <System>
-
-## Description
-What the system does, in words. Normal operation, start and stop.
-
-## Equipment
-| Name | Type | Description |
-|---|---|---|
-
-## Signals
-| Equipment | Signal | Type (digital/analog) | Contact (NO/NC) / range | Description |
-|---|---|---|---|---|
-
-## Operation
-Auto and manual, sequences, what starts and stops what.
-
-## Alarms
-| Name | Condition | Delay | Priority / level | Reaction |
-|---|---|---|---|---|
-
-## Interlocks
-| Equipment | Kind (switch on / switch off / trip) | Condition | Text |
-|---|---|---|---|
-
-## Open points
-```
+The engineer writes the description from [Functional description template.md](Functional%20description%20template.md).

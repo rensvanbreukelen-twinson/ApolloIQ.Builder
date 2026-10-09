@@ -19,7 +19,8 @@ APOLLOIQ_BUILDER_URL=http://localhost:5180 npm run smoke
 | Environment | Default | |
 |---|---|---|
 | `APOLLOIQ_BUILDER_URL` | `http://localhost:5180` | The Builder API |
-| `APOLLOIQ_DESIGN_DOCUMENTATION` | `../Documentation/Design` | Where `read_rules` finds `Rules.md` and `Design format.md` |
+| `APOLLOIQ_DESIGN_KIT` | `../Design kit` | Where `read_rules` finds `Rules for AI.md` and the functional description template |
+| `APOLLOIQ_DESIGN_DOCUMENTATION` | `../Documentation/Design` | Where `read_rules` finds `Design format.md` and the example design |
 
 `npm run smoke` creates a project over HTTP, then through the MCP server runs `validate_design` on
 [dirty-water.design.yaml](../Documentation/Design/dirty-water.design.yaml), `create_proposal`, `read_proposal` and a few read tools.
@@ -53,7 +54,7 @@ Restart Claude after changing the file. Node 20 or later.
 
 | Tool | |
 |---|---|
-| `read_rules` | `Documentation/Design/Rules.md` (when present) and the design format. Read first. |
+| `read_rules` | `Design kit/Rules for AI.md`, the functional description template, the design format and the example design. Read first. |
 | `list_projects` | Projects by name and id. Tools take a project by name or id. |
 | `read_design` | The project as a design (YAML); `path` for one subtree, e.g. `Bilge.DirtyWaterTank`. |
 | `list_blueprints`, `read_blueprint` | The blueprint library; one blueprint as a design. |
